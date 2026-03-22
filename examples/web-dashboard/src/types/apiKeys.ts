@@ -21,6 +21,7 @@ export interface ApiKey {
   };
   ipWhitelist?: string[];
   ipBlacklist?: string[];
+  _isMock?: boolean;
 }
 
 export interface ApiKeyCreateInput {

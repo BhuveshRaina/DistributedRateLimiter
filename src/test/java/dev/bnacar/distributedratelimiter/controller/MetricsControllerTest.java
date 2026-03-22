@@ -57,10 +57,10 @@ public class MetricsControllerTest {
         when(securityConfiguration.getMaxRequestSize()).thenReturn("1MB");
 
         Map<String, MetricsResponse.KeyMetrics> keyMetrics = new HashMap<>();
-        keyMetrics.put("user1", new MetricsResponse.KeyMetrics(5, 2, System.currentTimeMillis()));
-        keyMetrics.put("user2", new MetricsResponse.KeyMetrics(3, 1, System.currentTimeMillis()));
+        keyMetrics.put("user1", new MetricsResponse.KeyMetrics(5, 2, System.currentTimeMillis(), 50L));
+        keyMetrics.put("user2", new MetricsResponse.KeyMetrics(3, 1, System.currentTimeMillis(), 30L));
 
-        metricsResponse = new MetricsResponse(keyMetrics, true, 8, 3);
+        metricsResponse = new MetricsResponse(keyMetrics, new HashMap<>(), new java.util.ArrayList<>(), true, 8, 3, 100);
     }
 
     @Test
@@ -72,16 +72,19 @@ public class MetricsControllerTest {
                 .andExpect(content().contentType("application/json"))
                 .andExpect(jsonPath("$.totalAllowedRequests").value(8))
                 .andExpect(jsonPath("$.totalDeniedRequests").value(3))
+                .andExpect(jsonPath("$.totalProcessingTimeMs").value(100))
                 .andExpect(jsonPath("$.redisConnected").value(true))
                 .andExpect(jsonPath("$.keyMetrics.user1.allowedRequests").value(5))
                 .andExpect(jsonPath("$.keyMetrics.user1.deniedRequests").value(2))
                 .andExpect(jsonPath("$.keyMetrics.user2.allowedRequests").value(3))
-                .andExpect(jsonPath("$.keyMetrics.user2.deniedRequests").value(1));
+                .andExpect(jsonPath("$.keyMetrics.user2.deniedRequests").value(1))
+                .andExpect(jsonPath("$.perAlgorithmMetrics").isEmpty())
+                .andExpect(jsonPath("$.recentEvents").isEmpty());
     }
 
     @Test
     void getMetrics_WithEmptyMetrics_ShouldReturnEmptyKeyMetrics() throws Exception {
-        MetricsResponse emptyResponse = new MetricsResponse(new HashMap<>(), false, 0, 0);
+        MetricsResponse emptyResponse = new MetricsResponse(new HashMap<>(), new HashMap<>(), new java.util.ArrayList<>(), false, 0, 0, 0);
         when(metricsService.getMetrics()).thenReturn(emptyResponse);
 
         mockMvc.perform(get("/metrics"))

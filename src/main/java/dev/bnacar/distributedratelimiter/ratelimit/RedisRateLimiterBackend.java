@@ -35,6 +35,8 @@ public class RedisRateLimiterBackend implements RateLimiterBackend {
                 return new RedisTokenBucket(redisKey, config.getCapacity(), config.getRefillRate(), redisTemplate);
             case FIXED_WINDOW:
                 return new RedisFixedWindow(redisKey, config.getCapacity(), config.getRefillRate(), redisTemplate);
+            case LEAKY_BUCKET:
+                return new RedisLeakyBucket(redisKey, config.getCapacity(), config.getRefillRate(), redisTemplate);
             default:
                 throw new IllegalArgumentException("Unknown algorithm: " + config.getAlgorithm());
         }

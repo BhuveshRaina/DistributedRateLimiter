@@ -45,8 +45,12 @@ const Configuration = () => {
   // Load configuration from API
   useEffect(() => {
     const loadConfig = async () => {
+      setLoading(true);
       try {
-        const config = await rateLimiterApi.getConfig();
+        const [config, configStats] = await Promise.all([
+          rateLimiterApi.getConfig(),
+          rateLimiterApi.getConfigStats()
+        ]);
         
         // Set global config (algorithm defaults to token-bucket as backend doesn't expose it)
         setGlobalConfig({
@@ -82,11 +86,13 @@ const Configuration = () => {
         setPatternConfigs(patterns);
 
         // Update stats
-        setStats(prev => ({
-          ...prev,
-          totalKeyConfigs: keys.length,
-          totalPatternConfigs: patterns.length,
-        }));
+        setStats({
+          totalKeyConfigs: configStats.keyConfigCount || keys.length,
+          totalPatternConfigs: configStats.patternConfigCount || patterns.length,
+          mostUsedPattern: "user:*", // Backend doesn't track this yet
+          cacheHitRate: 98.4, // Mocked for UI
+          avgLookupTime: 1.2, // Mocked for UI
+        });
 
         setLoading(false);
       } catch (error) {
@@ -99,9 +105,19 @@ const Configuration = () => {
     loadConfig();
   }, []);
 
-  const handleUpdateGlobalConfig = (config: GlobalConfig) => {
-    setGlobalConfig(config);
-    toast.success("Global configuration updated successfully");
+  const handleUpdateGlobalConfig = async (config: GlobalConfig) => {
+    try {
+      await rateLimiterApi.updateDefaultConfig({
+        capacity: config.defaultCapacity,
+        refillRate: config.defaultRefillRate,
+        cleanupIntervalMs: config.cleanupInterval * 1000,
+      });
+      setGlobalConfig(config);
+      toast.success("Global configuration updated successfully");
+    } catch (error) {
+      toast.error("Failed to update global configuration");
+      console.error(error);
+    }
   };
 
   const handleAddKeyConfig = async (config: Omit<KeyConfig, "id" | "createdAt" | "updatedAt">) => {

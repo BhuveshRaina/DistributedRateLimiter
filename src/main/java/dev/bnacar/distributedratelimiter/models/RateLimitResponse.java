@@ -5,6 +5,7 @@ public class RateLimitResponse {
     private final int tokensRequested;
     private final boolean allowed;
     private final AdaptiveInfo adaptiveInfo;
+    private String algorithm;
 
     public RateLimitResponse(String key, int tokensRequested, boolean allowed) {
         this(key, tokensRequested, allowed, null);
@@ -31,5 +32,13 @@ public class RateLimitResponse {
 
     public AdaptiveInfo getAdaptiveInfo() {
         return adaptiveInfo;
+    }
+
+    public String getAlgorithm() {
+        return algorithm;
+    }
+
+    public void setAlgorithm(String algorithm) {
+        this.algorithm = algorithm;
     }
 }

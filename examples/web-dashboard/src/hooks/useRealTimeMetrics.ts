@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { rateLimiterApi, SystemMetrics } from '@/services/rateLimiterApi';
 
-const POLL_INTERVAL = 5000; // 5 seconds
+const POLL_INTERVAL = 2000; // 2 seconds
 
 interface UseRealTimeMetricsOptions {
   enabled?: boolean;

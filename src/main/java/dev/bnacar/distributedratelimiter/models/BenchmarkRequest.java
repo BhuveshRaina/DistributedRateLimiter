@@ -29,6 +29,12 @@ public class BenchmarkRequest {
     
     private String keyPrefix = "benchmark";
     
+    private String algorithmOverride;
+    
+    private Integer timeoutMs = 5000;
+    
+    private java.util.Map<String, String> customHeaders = new java.util.HashMap<>();
+    
     public BenchmarkRequest() {}
     
     public BenchmarkRequest(Integer concurrentThreads, Long requestsPerThread, 
@@ -85,5 +91,29 @@ public class BenchmarkRequest {
     
     public void setKeyPrefix(String keyPrefix) {
         this.keyPrefix = keyPrefix;
+    }
+
+    public String getAlgorithmOverride() {
+        return algorithmOverride;
+    }
+
+    public void setAlgorithmOverride(String algorithmOverride) {
+        this.algorithmOverride = algorithmOverride;
+    }
+
+    public Integer getTimeoutMs() {
+        return timeoutMs;
+    }
+
+    public void setTimeoutMs(Integer timeoutMs) {
+        this.timeoutMs = timeoutMs;
+    }
+
+    public java.util.Map<String, String> getCustomHeaders() {
+        return customHeaders;
+    }
+
+    public void setCustomHeaders(java.util.Map<String, String> customHeaders) {
+        this.customHeaders = customHeaders;
     }
 }

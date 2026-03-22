@@ -19,6 +19,12 @@ public class BenchmarkResponse {
     private final int concurrentThreads;
     private final long requestsPerThread;
     
+    // Response time statistics (ms)
+    private final double avgResponseTimeMs;
+    private final double p50ResponseTimeMs;
+    private final double p95ResponseTimeMs;
+    private final double p99ResponseTimeMs;
+    
     // Constructor for successful benchmark
     @JsonCreator
     public BenchmarkResponse(
@@ -29,7 +35,11 @@ public class BenchmarkResponse {
             @JsonProperty("throughputPerSecond") double throughputPerSecond, 
             @JsonProperty("successRate") double successRate,
             @JsonProperty("concurrentThreads") int concurrentThreads, 
-            @JsonProperty("requestsPerThread") long requestsPerThread) {
+            @JsonProperty("requestsPerThread") long requestsPerThread,
+            @JsonProperty("avgResponseTimeMs") double avgResponseTimeMs,
+            @JsonProperty("p50ResponseTimeMs") double p50ResponseTimeMs,
+            @JsonProperty("p95ResponseTimeMs") double p95ResponseTimeMs,
+            @JsonProperty("p99ResponseTimeMs") double p99ResponseTimeMs) {
         this.success = true;
         this.errorMessage = null;
         this.totalRequests = totalRequests;
@@ -40,6 +50,10 @@ public class BenchmarkResponse {
         this.successRate = successRate;
         this.concurrentThreads = concurrentThreads;
         this.requestsPerThread = requestsPerThread;
+        this.avgResponseTimeMs = avgResponseTimeMs;
+        this.p50ResponseTimeMs = p50ResponseTimeMs;
+        this.p95ResponseTimeMs = p95ResponseTimeMs;
+        this.p99ResponseTimeMs = p99ResponseTimeMs;
     }
     
     // Constructor for error response
@@ -54,6 +68,10 @@ public class BenchmarkResponse {
         this.successRate = 0;
         this.concurrentThreads = 0;
         this.requestsPerThread = 0;
+        this.avgResponseTimeMs = 0;
+        this.p50ResponseTimeMs = 0;
+        this.p95ResponseTimeMs = 0;
+        this.p99ResponseTimeMs = 0;
     }
     
     public static BenchmarkResponse error(String errorMessage) {
@@ -98,6 +116,22 @@ public class BenchmarkResponse {
     
     public long getRequestsPerThread() {
         return requestsPerThread;
+    }
+
+    public double getAvgResponseTimeMs() {
+        return avgResponseTimeMs;
+    }
+
+    public double getP50ResponseTimeMs() {
+        return p50ResponseTimeMs;
+    }
+
+    public double getP95ResponseTimeMs() {
+        return p95ResponseTimeMs;
+    }
+
+    public double getP99ResponseTimeMs() {
+        return p99ResponseTimeMs;
     }
     
     /**

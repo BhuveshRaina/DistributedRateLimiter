@@ -28,32 +28,33 @@ const ApiKeys = () => {
   const [selectedKeyForDetails, setSelectedKeyForDetails] = useState<ApiKey | null>(null);
   const [isBulkDialogOpen, setIsBulkDialogOpen] = useState(false);
   const [keyToDelete, setKeyToDelete] = useState<string | null>(null);
-  const accessLogs = generateMockAccessLogs();
 
-  // Load active keys from backend
+  // Load active authentication keys from backend
   useEffect(() => {
     const loadKeys = async () => {
       try {
-        const response = await rateLimiterApi.getActiveKeys();
+        const authKeys = await rateLimiterApi.getAuthApiKeys();
         
-        // Convert backend format to frontend ApiKey format
-        const apiKeys: ApiKey[] = response.keys.map((key) => ({
-          id: key.key,
-          name: key.key,
-          key: key.key,
-          description: `Active rate limiter key (${key.algorithm})`,
-          status: key.active ? 'active' as const : 'inactive' as const,
-          createdAt: new Date(key.lastAccessTime).toISOString(),
+        // Convert backend ApiKeyInfo list to frontend ApiKey format
+        const apiKeys: ApiKey[] = authKeys.map((info) => ({
+          id: info.key,
+          name: info.name,
+          key: info.key,
+          description: info.description,
+          status: (info.status as any) || 'active',
+          createdAt: info.createdAt,
           rateLimit: {
-            capacity: key.capacity,
-            refillRate: 0, // Not provided by backend
-            algorithm: key.algorithm.toLowerCase().replace('_', '-') as any,
+            capacity: 100,
+            refillRate: 50,
+            algorithm: "token-bucket",
           },
           usageStats: {
             totalRequests: 0,
             successfulRequests: 0,
             rateLimitedRequests: 0,
           },
+          // Do not mark as mock by default - we want to see actual data
+          _isMock: false 
         }));
         
         setKeys(apiKeys);
@@ -66,44 +67,64 @@ const ApiKeys = () => {
     };
 
     loadKeys();
-    
-    // Refresh keys every 10 seconds
-    const interval = setInterval(loadKeys, 10000);
-    return () => clearInterval(interval);
   }, []);
 
-  const handleCreateKey = (input: ApiKeyCreateInput) => {
-    const newKey: ApiKey = {
-      id: Math.random().toString(36).substring(7),
-      name: input.name,
-      key: `rl_${Array.from({ length: 32 }, () => Math.random().toString(36)[2]).join("")}`,
-      description: input.description,
-      status: "active",
-      createdAt: new Date().toISOString(),
-      expiresAt: input.expiresAt?.toISOString(),
-      rateLimit: input.useDefaultLimits
-        ? { capacity: 10, refillRate: 5, algorithm: "token-bucket" }
-        : {
-            capacity: input.customLimits!.capacity,
-            refillRate: input.customLimits!.refillRate,
-            algorithm: input.customLimits!.algorithm,
-          },
-      usageStats: {
-        totalRequests: 0,
-        successfulRequests: 0,
-        rateLimitedRequests: 0,
-      },
-      ipWhitelist: input.ipWhitelist,
-    };
+  const handleCreateKey = async (input: ApiKeyCreateInput) => {
+    // Generate a secure-looking key if not provided
+    const newKeyValue = `rl_${Array.from({ length: 32 }, () => Math.random().toString(36)[2]).join("")}`;
+    const name = input.name || `Key ${newKeyValue.substring(0, 8)}...`;
+    const description = input.description || "Persistent authentication API key";
+    
+    try {
+      await rateLimiterApi.addAuthApiKey({
+        key: newKeyValue,
+        name: name,
+        description: description
+      });
+      
+      const newKey: ApiKey = {
+        id: newKeyValue,
+        name: name,
+        key: newKeyValue,
+        description: description,
+        status: "active",
+        createdAt: new Date().toISOString(),
+        expiresAt: input.expiresAt?.toISOString(),
+        rateLimit: input.useDefaultLimits
+          ? { capacity: 100, refillRate: 50, algorithm: "token-bucket" }
+          : {
+              capacity: input.customLimits!.capacity,
+              refillRate: input.customLimits!.refillRate,
+              algorithm: input.customLimits!.algorithm,
+            },
+        usageStats: {
+          totalRequests: 0,
+          successfulRequests: 0,
+          rateLimitedRequests: 0,
+        },
+        ipWhitelist: input.ipWhitelist,
+        _isMock: false // NEW key in this session should have no logs
+      };
 
-    setKeys([newKey, ...keys]);
-    toast.success("API key created successfully");
+      setKeys([newKey, ...keys]);
+      toast.success("API key created successfully and saved to Redis");
+    } catch (error) {
+      toast.error("Failed to save API key to backend");
+      console.error(error);
+    }
+    setIsCreateModalOpen(false);
   };
 
-  const handleDeleteKey = (id: string) => {
-    setKeys(keys.filter((k) => k.id !== id));
-    setKeyToDelete(null);
-    toast.success("API key deleted");
+  const handleDeleteKey = async (id: string) => {
+    try {
+      await rateLimiterApi.deleteAuthApiKey(id);
+      setKeys(keys.filter((k) => k.id !== id));
+      setKeyToDelete(null);
+      toast.success("API key deleted from Redis");
+    } catch (error) {
+      toast.error("Failed to delete API key from backend");
+      console.error(error);
+    }
   };
 
   const handleBulkActivate = () => {
@@ -189,7 +210,7 @@ const ApiKeys = () => {
 
       <KeyDetailsPanel
         keyData={selectedKeyForDetails}
-        accessLogs={accessLogs}
+        accessLogs={selectedKeyForDetails?._isMock ? generateMockAccessLogs() : []}
         open={!!selectedKeyForDetails}
         onClose={() => setSelectedKeyForDetails(null)}
         onEdit={() => toast.info("Edit functionality coming soon")}

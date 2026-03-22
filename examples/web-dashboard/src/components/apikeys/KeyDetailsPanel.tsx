@@ -42,21 +42,21 @@ export const KeyDetailsPanel = ({
 }: KeyDetailsPanelProps) => {
   if (!keyData) return null;
 
-  const usageData = [
+  const usageData = keyData._isMock ? [
     { time: "00:00", requests: 120 },
     { time: "04:00", requests: 80 },
     { time: "08:00", requests: 200 },
     { time: "12:00", requests: 350 },
     { time: "16:00", requests: 280 },
     { time: "20:00", requests: 150 },
-  ];
+  ] : [];
 
   return (
     <Sheet open={open} onOpenChange={onClose}>
       <SheetContent className="w-full sm:max-w-2xl">
         <SheetHeader>
           <SheetTitle>{keyData.name}</SheetTitle>
-          <SheetDescription>Complete API key information and statistics</SheetDescription>
+          <SheetDescription>{keyData.description || "Complete API key information and statistics"}</SheetDescription>
         </SheetHeader>
 
         <ScrollArea className="h-[calc(100vh-120px)] pr-4">
@@ -65,6 +65,10 @@ export const KeyDetailsPanel = ({
             <div className="space-y-4">
               <h3 className="font-semibold">Key Information</h3>
               <div className="grid gap-3">
+                <div className="flex justify-between">
+                  <span className="text-sm text-muted-foreground">Key String</span>
+                  <code className="text-xs bg-muted px-1 py-0.5 rounded">{keyData.key}</code>
+                </div>
                 <div className="flex justify-between">
                   <span className="text-sm text-muted-foreground">Status</span>
                   <Badge>{keyData.status}</Badge>
@@ -116,20 +120,28 @@ export const KeyDetailsPanel = ({
 
               <div className="rounded-lg border border-border p-4">
                 <h4 className="mb-3 text-sm font-medium">Usage Over Time</h4>
-                <ResponsiveContainer width="100%" height={200}>
-                  <LineChart data={usageData}>
-                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                    <XAxis dataKey="time" tick={{ fontSize: 12 }} />
-                    <YAxis tick={{ fontSize: 12 }} />
-                    <Tooltip />
-                    <Line
-                      type="monotone"
-                      dataKey="requests"
-                      stroke="hsl(var(--primary))"
-                      strokeWidth={2}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
+                {usageData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={200}>
+                    <LineChart data={usageData}>
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                      <XAxis dataKey="time" tick={{ fontSize: 12 }} />
+                      <YAxis tick={{ fontSize: 12 }} />
+                      <Tooltip />
+                      <Line
+                        type="monotone"
+                        dataKey="requests"
+                        stroke="hsl(var(--primary))"
+                        strokeWidth={2}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-[200px] flex items-center justify-center bg-muted/20 rounded border border-dashed">
+                    <p className="text-sm text-muted-foreground text-center px-4">
+                      No usage data available for this key yet. Traffic data will appear here after the key is used.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -162,28 +174,34 @@ export const KeyDetailsPanel = ({
             <div className="space-y-4">
               <h3 className="font-semibold">Recent Access Logs</h3>
               <div className="space-y-2">
-                {accessLogs.slice(0, 10).map((log) => (
-                  <div
-                    key={log.id}
-                    className="flex items-center justify-between rounded-lg border border-border bg-background/50 p-3 text-sm"
-                  >
-                    <div>
-                      <p className="font-medium">{log.endpoint}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {new Date(log.timestamp).toLocaleString()} • {log.ipAddress}
-                      </p>
+                {accessLogs.length > 0 ? (
+                  accessLogs.slice(0, 10).map((log) => (
+                    <div
+                      key={log.id}
+                      className="flex items-center justify-between rounded-lg border border-border bg-background/50 p-3 text-sm"
+                    >
+                      <div>
+                        <p className="font-medium">{log.endpoint}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {new Date(log.timestamp).toLocaleString()} • {log.ipAddress}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <Badge
+                          variant={log.statusCode < 300 ? "default" : "destructive"}
+                          className="font-mono text-xs"
+                        >
+                          {log.statusCode}
+                        </Badge>
+                        <p className="text-xs text-muted-foreground">{log.responseTime}ms</p>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <Badge
-                        variant={log.statusCode < 300 ? "default" : "destructive"}
-                        className="font-mono text-xs"
-                      >
-                        {log.statusCode}
-                      </Badge>
-                      <p className="text-xs text-muted-foreground">{log.responseTime}ms</p>
-                    </div>
+                  ))
+                ) : (
+                  <div className="py-8 text-center border border-dashed rounded-lg bg-muted/20">
+                    <p className="text-sm text-muted-foreground">No recent access logs found for this key.</p>
                   </div>
-                ))}
+                )}
               </div>
             </div>
 

@@ -43,10 +43,20 @@ public class TokenBucket implements RateLimiter {
 
     private synchronized void refill() {
         long currentTime = System.currentTimeMillis();
-        long timeSinceLastRefill = currentTime - lastRefillTime;
+        long elapsedMs = currentTime - lastRefillTime;
 
-        int tokensToAdd = (int) (timeSinceLastRefill / 1000 * refillRate);
-        currentTokens = Math.min(capacity, currentTokens + tokensToAdd);
-        lastRefillTime = currentTime;
+        if (elapsedMs > 0) {
+            // How many tokens were generated in the elapsed time
+            double tokensGenerated = (elapsedMs / 1000.0) * refillRate;
+            
+            if (tokensGenerated >= 1.0) {
+                int tokensToAdd = (int) tokensGenerated;
+                currentTokens = Math.min(capacity, currentTokens + tokensToAdd);
+                
+                // Update lastRefillTime by the exact duration used to generate the whole tokens added
+                long timeConsumedMs = (long) (tokensToAdd * 1000.0 / refillRate);
+                lastRefillTime += timeConsumedMs;
+            }
+        }
     }
 }

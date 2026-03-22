@@ -101,64 +101,83 @@ const Dashboard = () => {
     
     const currentActiveKeys = Object.keys(realtimeMetrics.keyMetrics).length;
     
-    // Calculate requests per second
+    // Calculate requests per second and update time series
     if (previousMetrics) {
       const timeDiff = (Date.now() - previousMetrics.timestamp) / 1000; // seconds
+      
+      // Prevent division by zero or near-zero which causes massive spikes (e.g., 600 RPS)
+      if (timeDiff < 0.5) return;
+
       const allowedDiff = realtimeMetrics.totalAllowedRequests - previousMetrics.allowed;
       const deniedDiff = realtimeMetrics.totalDeniedRequests - previousMetrics.denied;
       const totalDiff = allowedDiff + deniedDiff;
       
-      if (timeDiff > 0) {
-        setRequestsPerSecond(Math.round(totalDiff / timeDiff));
-      }
+      const rps = timeDiff > 0 ? Math.round(totalDiff / timeDiff) : 0;
+      const allowedRps = timeDiff > 0 ? Math.round(allowedDiff / timeDiff) : 0;
+      const deniedRps = timeDiff > 0 ? Math.round(deniedDiff / timeDiff) : 0;
+      
+      setRequestsPerSecond(rps);
+
+      // Update time series data with actual rates (RPS)
+      const now = new Date();
+      setTimeSeriesData((prev) => {
+        const newPoint = {
+          time: now.toLocaleTimeString([], { minute: '2-digit', second: '2-digit' }),
+          allowed: allowedRps,
+          rejected: deniedRps,
+          total: rps,
+        };
+        
+        return [...prev, newPoint].slice(-300); // Keep last 300 data points (10 minutes @ 2s interval)
+      });
     }
     
     setActiveKeys(currentActiveKeys);
     setSuccessRate(currentSuccessRate);
     
-    // Update time series data
-    const now = new Date();
-    setTimeSeriesData((prev) => {
-      const newPoint = {
-        time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        allowed: realtimeMetrics.totalAllowedRequests,
-        rejected: realtimeMetrics.totalDeniedRequests,
-        total: totalRequests,
-      };
+    // Update algorithm metrics from real data
+    if (realtimeMetrics.perAlgorithmMetrics) {
+      const metrics: AlgorithmMetric[] = Object.entries(realtimeMetrics.perAlgorithmMetrics)
+        .filter(([_, data]) => (data.allowedRequests + data.deniedRequests) > 0)
+        .map(([name, data]) => ({
+          name,
+          activeKeys: 0, // Will be updated by fetchAlgorithmMetrics
+          avgResponseTime: data.totalProcessingTimeMs / (data.allowedRequests + data.deniedRequests || 1),
+          successRate: (data.allowedRequests / (data.allowedRequests + data.deniedRequests || 1)) * 100,
+        }));
       
-      const updated = [...prev, newPoint].slice(-10); // Keep last 10 data points
-      return updated;
-    });
+      if (metrics.length > 0) {
+        setAlgorithmMetrics(prev => {
+          return metrics.map(m => {
+            const existing = prev.find(p => p.name === m.name);
+            return { ...m, activeKeys: existing?.activeKeys || 0 };
+          });
+        });
+      }
+    }
     
-    // Update previous metrics for rate calculation
+    // Update activity events from real events fetched from backend
+    if (realtimeMetrics.recentEvents) {
+      const newActivities: ActivityEvent[] = realtimeMetrics.recentEvents.map(event => ({
+        id: event.id,
+        timestamp: new Date(event.timestamp).toISOString(),
+        key: event.key,
+        algorithm: event.algorithm,
+        status: event.allowed ? "allowed" : "rejected",
+        tokensUsed: event.tokens,
+      }));
+      
+      setActivities(newActivities.sort((a, b) => 
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      ));
+    }
+    
+    // Update previous metrics for next calculation
     setPreviousMetrics({
       allowed: realtimeMetrics.totalAllowedRequests,
       denied: realtimeMetrics.totalDeniedRequests,
       timestamp: Date.now()
     });
-    
-    // Generate activity events from key metrics changes
-    const newActivities: ActivityEvent[] = [];
-    Object.entries(realtimeMetrics.keyMetrics).forEach(([key, metric]) => {
-      if (metric.allowedRequests > 0 || metric.deniedRequests > 0) {
-        const totalKeyRequests = metric.allowedRequests + metric.deniedRequests;
-        const wasAllowed = metric.allowedRequests > metric.deniedRequests;
-        
-        newActivities.push({
-          id: `${key}-${metric.lastAccessTime}`,
-          timestamp: new Date(metric.lastAccessTime).toISOString(),
-          key: key,
-          algorithm: "TOKEN_BUCKET", // Default, will be enriched from admin/keys
-          status: wasAllowed ? "allowed" : "rejected",
-          tokensUsed: 1,
-        });
-      }
-    });
-    
-    // Sort by timestamp and keep most recent 20
-    setActivities(newActivities.sort((a, b) => 
-      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-    ).slice(0, 20));
     
   }, [realtimeMetrics, previousMetrics]);
 
@@ -169,23 +188,26 @@ const Dashboard = () => {
         const keysData = await rateLimiterApi.getActiveKeys();
         
         // Group by algorithm
-        const algorithmGroups: Record<string, { count: number; totalRequests: number; successCount: number }> = {};
+        const algorithmGroups: Record<string, { count: number; allowed: number; denied: number; time: number }> = {};
         
         keysData.keys.forEach(key => {
           const algo = key.algorithm || 'TOKEN_BUCKET';
           if (!algorithmGroups[algo]) {
-            algorithmGroups[algo] = { count: 0, totalRequests: 0, successCount: 0 };
+            algorithmGroups[algo] = { count: 0, allowed: 0, denied: 0, time: 0 };
           }
           algorithmGroups[algo].count++;
         });
         
-        // Convert to algorithm metrics format
-        const metrics: AlgorithmMetric[] = Object.entries(algorithmGroups).map(([name, data]) => ({
-          name,
-          activeKeys: data.count,
-          avgResponseTime: Math.random() * 10 + 2, // Backend doesn't track response time yet
-          successRate: 95 + Math.random() * 5, // Backend doesn't track per-algorithm success rate yet
-        }));
+        // Convert to algorithm metrics format using real backend metrics if available
+        const metrics: AlgorithmMetric[] = Object.entries(algorithmGroups).map(([name, data]) => {
+          const backendAlgo = realtimeMetrics?.perAlgorithmMetrics?.[name];
+          return {
+            name,
+            activeKeys: data.count,
+            avgResponseTime: backendAlgo ? (backendAlgo.totalProcessingTimeMs / (backendAlgo.allowedRequests + backendAlgo.deniedRequests || 1)) : 0,
+            successRate: backendAlgo ? (backendAlgo.allowedRequests / (backendAlgo.allowedRequests + backendAlgo.deniedRequests || 1) * 100) : 100,
+          };
+        });
         
         setAlgorithmMetrics(metrics);
         
@@ -251,7 +273,7 @@ const Dashboard = () => {
         <div className="mb-6 flex items-center justify-between">
           <div>
             <h3 className="text-lg font-semibold text-foreground">Requests Over Time</h3>
-            <p className="text-sm text-muted-foreground">Last 10 minutes • Updates every 5 seconds</p>
+            <p className="text-sm text-muted-foreground">Last 10 minutes • Updates every 2 seconds</p>
           </div>
           <div className="flex items-center gap-4 text-sm">
             <div className="flex items-center gap-2">

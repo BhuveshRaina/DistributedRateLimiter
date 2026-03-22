@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,9 +26,9 @@ import {
 } from "@/components/ui/form";
 
 const globalConfigSchema = z.object({
-  defaultCapacity: z.number().min(1).max(1000),
-  defaultRefillRate: z.number().min(1).max(100),
-  cleanupInterval: z.number().min(1).max(3600),
+  defaultCapacity: z.number().min(1).max(1000000),
+  defaultRefillRate: z.number().min(1).max(100000),
+  cleanupInterval: z.number().min(1).max(86400),
   algorithm: z.enum(["token-bucket", "sliding-window", "fixed-window", "leaky-bucket"]),
 });
 
@@ -41,6 +42,11 @@ export const GlobalConfigCard = ({ config, onUpdate }: GlobalConfigCardProps) =>
     resolver: zodResolver(globalConfigSchema),
     defaultValues: config,
   });
+
+  // Sync form with updated config prop (e.g., after fetching from backend)
+  useEffect(() => {
+    form.reset(config);
+  }, [config, form]);
 
   const onSubmit = (data: GlobalConfig) => {
     onUpdate(data);

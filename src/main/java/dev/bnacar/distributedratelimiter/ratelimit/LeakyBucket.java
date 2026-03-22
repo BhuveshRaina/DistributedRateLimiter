@@ -7,6 +7,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Leaky bucket rate limiter implementation.
@@ -74,31 +75,36 @@ public class LeakyBucket implements RateLimiter {
     }
     
     @Override
-    public boolean tryConsume(int tokens) {
+    public synchronized boolean tryConsume(int tokens) {
         if (tokens <= 0 || shutdown) {
             return false;
         }
         
-        // Check if queue has capacity
-        if (requestQueue.size() >= queueCapacity) {
-            return false; // Queue full, reject immediately
-        }
-        
-        // For synchronous operation, we need to simulate the queue behavior
-        // In a real leaky bucket, this would be asynchronous, but the RateLimiter
-        // interface is synchronous, so we calculate if the request would be processed
-        
         long currentTime = System.currentTimeMillis();
-        long estimatedProcessingTime = calculateEstimatedProcessingTime();
+        long elapsedMs = currentTime - lastLeakTime.get();
         
-        // If estimated processing time exceeds max queue time, reject
-        if (estimatedProcessingTime > maxQueueTimeMs) {
+        // Calculate how many tokens have "leaked" (processed) since last time
+        double leaked = (elapsedMs / 1000.0) * leakRatePerSecond;
+        if (leaked >= 1.0) {
+            int tokensToClear = (int) leaked;
+            // Reduce simulated queue size
+            int currentSize = currentSimulatedQueueSize.get();
+            int newSize = Math.max(0, currentSize - tokensToClear);
+            currentSimulatedQueueSize.set(newSize);
+            lastLeakTime.addAndGet((long) (tokensToClear * 1000.0 / leakRatePerSecond));
+        }
+
+        // Check if we have room in the "bucket" (queue)
+        if (currentSimulatedQueueSize.get() + tokens > queueCapacity) {
             return false;
         }
         
-        // Add to queue (simulated - we don't actually queue for synchronous interface)
+        currentSimulatedQueueSize.addAndGet(tokens);
         return true;
     }
+    
+    // Add this field to the class
+    private final AtomicInteger currentSimulatedQueueSize = new AtomicInteger(0);
     
     /**
      * Calculate estimated time to process current queue plus new request.

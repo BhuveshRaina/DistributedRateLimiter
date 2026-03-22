@@ -44,6 +44,14 @@ interface ActiveKey {
   active: boolean;
 }
 
+interface ApiKeyInfo {
+  key: string;
+  name: string;
+  description: string;
+  createdAt: string;
+  status: string;
+}
+
 interface AdminKeysResponse {
   keys: ActiveKey[];
   totalKeys: number;
@@ -57,6 +65,9 @@ interface LoadTestRequest {
   tokensPerRequest: number;
   delayBetweenRequestsMs?: number;
   keyPrefix?: string;
+  algorithmOverride?: string;
+  timeoutMs?: number;
+  customHeaders?: Record<string, string>;
 }
 
 // BenchmarkResponse from backend (aligned with BenchmarkResponse.java)
@@ -71,6 +82,10 @@ interface LoadTestResponse {
   durationSeconds: number;
   concurrentThreads: number;
   requestsPerThread: number;
+  avgResponseTimeMs: number;
+  p50ResponseTimeMs: number;
+  p95ResponseTimeMs: number;
+  p99ResponseTimeMs: number;
 }
 
 interface KeyMetric {
@@ -79,10 +94,30 @@ interface KeyMetric {
   lastAccessTime: number;
 }
 
+interface AlgorithmMetrics {
+  allowedRequests: number;
+  deniedRequests: number;
+  totalProcessingTimeMs: number;
+  successRate: number;
+  avgResponseTimeMs: number;
+}
+
+interface RateLimitEvent {
+  id: string;
+  timestamp: number;
+  key: string;
+  algorithm: string;
+  allowed: boolean;
+  tokens: number;
+}
+
 interface SystemMetrics {
   keyMetrics: Record<string, KeyMetric>;
+  perAlgorithmMetrics: Record<string, AlgorithmMetrics>;
+  recentEvents: RateLimitEvent[];
   totalAllowedRequests: number;
   totalDeniedRequests: number;
+  totalProcessingTimeMs: number;
   redisConnected: boolean;
 }
 
@@ -132,7 +167,16 @@ class RateLimiterApiService {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      return response.json();
+      // Check if response has content and is JSON (support specialized JSON types like actuator)
+      const contentType = response.headers.get('content-type');
+      if (contentType && (contentType.includes('application/json') || contentType.includes('+json'))) {
+        const text = await response.text();
+        return text ? JSON.parse(text) : {} as T;
+      }
+      
+      // For non-JSON or empty responses, return as text or empty object
+      const text = await response.text();
+      return text as unknown as T;
     } catch (error) {
       if (error instanceof Error) {
         throw error;
@@ -169,6 +213,17 @@ class RateLimiterApiService {
     return this.request<RateLimiterConfig>('/api/ratelimit/config');
   }
 
+  async getConfigStats(): Promise<Record<string, number>> {
+    return this.request<Record<string, number>>('/api/ratelimit/config/stats');
+  }
+
+  async updateDefaultConfig(config: { capacity?: number; refillRate?: number; cleanupIntervalMs?: number }): Promise<void> {
+    await this.request('/api/ratelimit/config/default', {
+      method: 'POST',
+      body: JSON.stringify(config),
+    });
+  }
+
   async updateKeyConfig(key: string, config: KeyConfig): Promise<void> {
     await this.request(`/api/ratelimit/config/keys/${encodeURIComponent(key)}`, {
       method: 'POST',
@@ -199,6 +254,25 @@ class RateLimiterApiService {
   
   async getActiveKeys(): Promise<AdminKeysResponse> {
     return this.adminRequest<AdminKeysResponse>('/admin/keys');
+  }
+
+  // ============ AUTHENTICATION API KEYS ============
+  
+  async getAuthApiKeys(): Promise<ApiKeyInfo[]> {
+    return this.request<ApiKeyInfo[]>('/admin/api-keys');
+  }
+
+  async addAuthApiKey(request: { key: string; name: string; description?: string }): Promise<void> {
+    await this.request('/admin/api-keys', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+  }
+
+  async deleteAuthApiKey(key: string): Promise<void> {
+    await this.request(`/admin/api-keys/${encodeURIComponent(key)}`, {
+      method: 'DELETE',
+    });
   }
 
   // ============ LOAD TESTING ============

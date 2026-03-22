@@ -16,7 +16,7 @@ public class FixedWindow implements RateLimiter {
     private volatile long windowStartTime;
     
     public FixedWindow(int capacity, int refillRate) {
-        this(capacity, refillRate, 60000); // Default 1-minute window
+        this(capacity, refillRate, 1000); // 1-second window to match req/sec refill logic
     }
     
     public FixedWindow(int capacity, int refillRate, long windowDurationMs) {

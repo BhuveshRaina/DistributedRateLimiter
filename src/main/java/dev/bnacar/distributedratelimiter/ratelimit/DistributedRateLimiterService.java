@@ -42,11 +42,22 @@ public class DistributedRateLimiterService {
     }
     
     public boolean isAllowed(String key, int tokens) {
+        return isAllowed(key, tokens, null);
+    }
+    
+    public boolean isAllowed(String key, int tokens, RateLimitAlgorithm algorithmOverride) {
         if (tokens <= 0) {
             return false;
         }
         
         RateLimitConfig config = configurationResolver.resolveConfig(key);
+        
+        // Apply algorithm override if provided
+        if (algorithmOverride != null) {
+            config = new RateLimitConfig(config.getCapacity(), config.getRefillRate(), 
+                                       config.getCleanupIntervalMs(), algorithmOverride);
+        }
+        
         RateLimiterBackend backend = getAvailableBackend();
         try {
             RateLimiter rateLimiter = backend.getRateLimiter(key, config);

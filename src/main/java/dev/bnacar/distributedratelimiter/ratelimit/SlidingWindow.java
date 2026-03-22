@@ -27,9 +27,11 @@ public class SlidingWindow implements RateLimiter {
     }
     
     public SlidingWindow(int capacity, int refillRate) {
-        this.capacity = capacity;
+        // In a sliding window, 'refillRate' is the actual limit (req/sec)
+        // 'capacity' is used as the burst allowance
+        this.capacity = Math.max(capacity, refillRate);
         this.refillRate = refillRate;
-        this.windowSizeMs = 1000; // 1 second window - can be made configurable later
+        this.windowSizeMs = 1000; // 1 second window
         this.requests = new ConcurrentLinkedDeque<>();
         this.currentCount = new AtomicInteger(0);
     }

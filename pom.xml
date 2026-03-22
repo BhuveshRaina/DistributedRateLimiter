@@ -15,7 +15,7 @@
     <description>Production-ready distributed rate limiter with Redis backend</description>
 
     <properties>
-        <java.version>21</java.version>
+        <java.version>17</java.version>
         <jacoco.min.instruction.coverage>0.50</jacoco.min.instruction.coverage>
         <jacoco.min.branch.coverage>0.50</jacoco.min.branch.coverage>
         <maven.project.sourceRoots.warningsDisabled>true</maven.project.sourceRoots.warningsDisabled>
@@ -53,6 +53,12 @@
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-tracing</artifactId>
+        </dependency>
+        <!-- Micrometer Prometheus registry for metrics scraping -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+            <scope>runtime</scope>
         </dependency>
         <!-- OpenAPI/Swagger for API documentation -->
         <dependency>
@@ -241,7 +247,6 @@
                 <executions>
                     <execution>
                         <goals>
-                            <goal>compile</goal>
                             <goal>testCompile</goal>
                         </goals>
                     </execution>

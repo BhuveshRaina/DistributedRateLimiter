@@ -3,27 +3,38 @@ package dev.bnacar.distributedratelimiter.security;
 import dev.bnacar.distributedratelimiter.config.SecurityConfiguration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
 
 public class ApiKeyServiceTest {
 
     private SecurityConfiguration securityConfiguration;
+    private ApiKeyRepository apiKeyRepository;
     private ApiKeyService apiKeyService;
+    private dev.bnacar.distributedratelimiter.ratelimit.RateLimiterService rateLimiterService;
+    private dev.bnacar.distributedratelimiter.monitoring.MetricsService metricsService;
 
     @BeforeEach
     public void setUp() {
         securityConfiguration = new SecurityConfiguration();
-        apiKeyService = new ApiKeyService(securityConfiguration);
+        apiKeyRepository = Mockito.mock(ApiKeyRepository.class);
+        rateLimiterService = Mockito.mock(dev.bnacar.distributedratelimiter.ratelimit.RateLimiterService.class);
+        metricsService = Mockito.mock(dev.bnacar.distributedratelimiter.monitoring.MetricsService.class);
+        apiKeyService = new ApiKeyService(securityConfiguration, apiKeyRepository, rateLimiterService, metricsService);
     }
 
     @Test
     public void testValidApiKeyWhenEnabled() {
         // Configure valid API keys
         securityConfiguration.getApiKeys().setEnabled(true);
-        securityConfiguration.getApiKeys().setValidKeys(Arrays.asList("key1", "key2", "premium-key"));
+        when(apiKeyRepository.exists("key1")).thenReturn(true);
+        when(apiKeyRepository.exists("key2")).thenReturn(true);
+        when(apiKeyRepository.exists("premium-key")).thenReturn(true);
 
         assertTrue(apiKeyService.isValidApiKey("key1"));
         assertTrue(apiKeyService.isValidApiKey("key2"));
@@ -34,7 +45,7 @@ public class ApiKeyServiceTest {
     public void testInvalidApiKeyWhenEnabled() {
         // Configure valid API keys
         securityConfiguration.getApiKeys().setEnabled(true);
-        securityConfiguration.getApiKeys().setValidKeys(Arrays.asList("key1", "key2"));
+        when(apiKeyRepository.exists(anyString())).thenReturn(false);
 
         assertFalse(apiKeyService.isValidApiKey("invalid-key"));
         assertFalse(apiKeyService.isValidApiKey(""));
