@@ -18,11 +18,11 @@ public class RateLimiterService {
 
     private static final Logger logger = LoggerFactory.getLogger(RateLimiterService.class);
 
-    private final ConfigurationResolver configurationResolver;
-    private final long cleanupIntervalMs;
-    private final ConcurrentHashMap<String, BucketHolder> buckets;
-    private final ScheduledExecutorService cleanupExecutor;
-    private final MetricsService metricsService;
+    protected final ConfigurationResolver configurationResolver;
+    protected final long cleanupIntervalMs;
+    protected final ConcurrentHashMap<String, BucketHolder> buckets;
+    protected final ScheduledExecutorService cleanupExecutor;
+    protected final MetricsService metricsService;
 
     @Autowired
     public RateLimiterService(ConfigurationResolver configurationResolver, 

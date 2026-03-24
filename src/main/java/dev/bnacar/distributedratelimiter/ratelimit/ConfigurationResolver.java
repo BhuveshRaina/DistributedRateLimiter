@@ -73,6 +73,16 @@ public class ConfigurationResolver {
             return createConfig(keyConfig);
         }
         
+        // 1b. Check prefix match for suffixed keys (e.g. key:0, key:1)
+        int lastColon = key.lastIndexOf(':');
+        if (lastColon > 0) {
+            String prefix = key.substring(0, lastColon);
+            RateLimiterConfiguration.KeyConfig prefixConfig = configuration.getKeys().get(prefix);
+            if (prefixConfig != null) {
+                return createConfig(prefixConfig);
+            }
+        }
+        
         // 2. Check pattern matches
         for (Map.Entry<String, RateLimiterConfiguration.KeyConfig> entry : configuration.getPatterns().entrySet()) {
             String pattern = entry.getKey();

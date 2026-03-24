@@ -36,10 +36,11 @@ import java.util.concurrent.atomic.AtomicLong;
 @CrossOrigin(origins = {"http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173", "http://127.0.0.1:3000", "http://[::1]:5173", "http://[::1]:3000"})
 public class BenchmarkController {
     private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(BenchmarkController.class);
-    private final RateLimiterService rateLimiterService;
+    private final dev.bnacar.distributedratelimiter.ratelimit.RateLimiterService rateLimiterService;
     private final ExecutorService benchmarkExecutor;
 
-    public BenchmarkController(RateLimiterService rateLimiterService) {
+    public BenchmarkController(@org.springframework.beans.factory.annotation.Qualifier("distributedRateLimiterService") 
+                             dev.bnacar.distributedratelimiter.ratelimit.RateLimiterService rateLimiterService) {
         this.rateLimiterService = rateLimiterService;
         this.benchmarkExecutor = Executors.newCachedThreadPool(r -> {
             Thread t = new Thread(r, "Benchmark-Worker");
@@ -82,7 +83,7 @@ public class BenchmarkController {
         
         // Launch concurrent workers
         for (int i = 0; i < request.getConcurrentThreads(); i++) {
-            final int threadId = i;
+            final int threadId = i + 1;
             benchmarkExecutor.submit(() -> {
                 try {
                     runWorkerThread(request, threadId, successCount, errorCount, totalRequests, responseTimes);

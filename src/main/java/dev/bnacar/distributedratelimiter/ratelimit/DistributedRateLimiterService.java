@@ -1,5 +1,6 @@
 package dev.bnacar.distributedratelimiter.ratelimit;
 
+import dev.bnacar.distributedratelimiter.monitoring.MetricsService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Primary;
@@ -15,9 +16,8 @@ import jakarta.annotation.PreDestroy;
 @Service
 @Primary
 @ConditionalOnProperty(name = "ratelimiter.redis.enabled", havingValue = "true", matchIfMissing = true)
-public class DistributedRateLimiterService {
+public class DistributedRateLimiterService extends RateLimiterService {
     
-    private final ConfigurationResolver configurationResolver;
     private final RateLimiterBackend primaryBackend;
     private final RateLimiterBackend fallbackBackend;
     private volatile boolean usingFallback = false;
@@ -25,31 +25,43 @@ public class DistributedRateLimiterService {
     @Autowired
     public DistributedRateLimiterService(
             ConfigurationResolver configurationResolver,
+            RateLimiterConfiguration configuration,
+            MetricsService metricsService,
             RedisTemplate<String, Object> redisTemplate) {
-        this.configurationResolver = configurationResolver;
+        super(configurationResolver, configuration, metricsService);
         this.primaryBackend = new RedisRateLimiterBackend(redisTemplate);
         this.fallbackBackend = new InMemoryRateLimiterBackend();
     }
     
-    // Constructor for testing
+    // Convenient constructor for testing and manual instantiation
+    public DistributedRateLimiterService(
+            ConfigurationResolver configurationResolver,
+            RedisTemplate<String, Object> redisTemplate) {
+        this(configurationResolver, new RateLimiterConfiguration(), null, redisTemplate);
+    }
+    
+    // Constructor for testing with mocked backends
     public DistributedRateLimiterService(
             ConfigurationResolver configurationResolver,
             RateLimiterBackend primaryBackend,
             RateLimiterBackend fallbackBackend) {
-        this.configurationResolver = configurationResolver;
+        super(configurationResolver, new RateLimiterConfiguration(), null);
         this.primaryBackend = primaryBackend;
         this.fallbackBackend = fallbackBackend;
     }
     
+    @Override
     public boolean isAllowed(String key, int tokens) {
         return isAllowed(key, tokens, null);
     }
     
+    @Override
     public boolean isAllowed(String key, int tokens, RateLimitAlgorithm algorithmOverride) {
         if (tokens <= 0) {
             return false;
         }
         
+        long startTime = System.currentTimeMillis();
         RateLimitConfig config = configurationResolver.resolveConfig(key);
         
         // Apply algorithm override if provided
@@ -58,22 +70,44 @@ public class DistributedRateLimiterService {
                                        config.getCleanupIntervalMs(), algorithmOverride);
         }
         
+        boolean allowed = false;
         RateLimiterBackend backend = getAvailableBackend();
         try {
             RateLimiter rateLimiter = backend.getRateLimiter(key, config);
-            return rateLimiter.tryConsume(tokens);
+            allowed = rateLimiter.tryConsume(tokens);
         } catch (RuntimeException ex) {
             if (backend != fallbackBackend) {
                 usingFallback = true;
                 try {
                     RateLimiter fallbackLimiter = fallbackBackend.getRateLimiter(key, config);
-                    return fallbackLimiter.tryConsume(tokens);
+                    allowed = fallbackLimiter.tryConsume(tokens);
                 } catch (RuntimeException fallbackEx) {
-                    return false;
+                    allowed = false;
                 }
+            } else {
+                allowed = false;
             }
-            return false;
         }
+
+        long processingTime = System.currentTimeMillis() - startTime;
+        
+        // Record metrics safely
+        try {
+            if (metricsService != null) {
+                if (allowed) {
+                    metricsService.recordAllowedRequest(key, config.getAlgorithm(), tokens);
+                } else {
+                    metricsService.recordDeniedRequest(key, config.getAlgorithm(), tokens);
+                }
+                metricsService.recordProcessingTime(key, config.getAlgorithm(), processingTime);
+            }
+        } catch (Exception e) {
+            // Log metrics error but don't fail the request
+            org.slf4j.LoggerFactory.getLogger(DistributedRateLimiterService.class)
+                .warn("Failed to record metrics for key {}: {}", key, e.getMessage());
+        }
+        
+        return allowed;
     }
     
     /**
@@ -111,16 +145,10 @@ public class DistributedRateLimiterService {
     }
     
     /**
-     * Get the number of active rate limiters in current backend.
-     */
-    public int getActiveBucketCount() {
-        return getAvailableBackend().getActiveCount();
-    }
-    
-    /**
      * Clear all rate limiters from all backends.
      */
-    public void clearAllBuckets() {
+    @Override
+    public void clearBuckets() {
         primaryBackend.clear();
         fallbackBackend.clear();
         configurationResolver.clearCache();

@@ -30,7 +30,7 @@ class DistributedRateLimiterServiceTest {
     @BeforeEach
     void setUp() {
         // Clean up any existing test data
-        distributedRateLimiterService.clearAllBuckets();
+        distributedRateLimiterService.clearBuckets();
     }
 
     @Test
@@ -174,7 +174,7 @@ class DistributedRateLimiterServiceTest {
         assertTrue(distributedRateLimiterService.isAllowed(key, 3));
         
         // Clear buckets
-        distributedRateLimiterService.clearAllBuckets();
+        distributedRateLimiterService.clearBuckets();
         
         // Should have full capacity again
         assertTrue(distributedRateLimiterService.isAllowed(key, 5));
