@@ -67,8 +67,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Initial fetch
     fetchMetrics();
 
-    // Poll every 2 seconds
-    intervalId = setInterval(fetchMetrics, 2000);
+    // Poll every 1 second for better real-time resolution during load tests
+    intervalId = setInterval(fetchMetrics, 1000);
 
     return () => {
       if (intervalId) {

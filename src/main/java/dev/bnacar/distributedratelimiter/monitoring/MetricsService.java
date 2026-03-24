@@ -485,12 +485,38 @@ public class MetricsService {
 
          */
 
-        public void removeKeyMetrics(String key) {
-
-            keyMetrics.remove(key);
-
-        }
-
+    public void removeKeyMetrics(String key) {
+        keyMetrics.remove(key);
+        // Also remove from Redis
+        redisTemplate.delete(KEY_METRICS_PREFIX + key);
+        redisTemplate.delete(ACTIVE_KEYS_PREFIX + key);
     }
+
+    /**
+     * Clear all metrics for keys starting with a specific prefix.
+     */
+    public void clearMetricsByPrefix(String prefix) {
+        try {
+            // Remove from local cache
+            keyMetrics.keySet().removeIf(k -> k.startsWith(prefix));
+            
+            // Remove from Redis (both metrics and active status)
+            Set<String> metricKeys = redisTemplate.keys(KEY_METRICS_PREFIX + prefix + "*");
+            if (metricKeys != null && !metricKeys.isEmpty()) {
+                redisTemplate.delete(metricKeys);
+            }
+            
+            Set<String> activeKeys = redisTemplate.keys(ACTIVE_KEYS_PREFIX + prefix + "*");
+            if (activeKeys != null && !activeKeys.isEmpty()) {
+                redisTemplate.delete(activeKeys);
+            }
+            
+            logger.info("Cleared Redis metrics for prefix: {}", prefix);
+        } catch (Exception e) {
+            logger.error("Failed to clear metrics by prefix {}: {}", prefix, e.getMessage());
+        }
+    }
+
+}
 
     

@@ -40,7 +40,7 @@ export const LiveResults = ({ data }: LiveResultsProps) => {
                 dataKey="timestamp"
                 className="text-muted-foreground"
                 tick={{ fontSize: 12 }}
-                tickFormatter={(value) => `${Math.floor(value / 1000)}s`}
+                tickFormatter={(value) => `${value}s`}
               />
               <YAxis className="text-muted-foreground" tick={{ fontSize: 12 }} />
               <Tooltip
@@ -71,7 +71,7 @@ export const LiveResults = ({ data }: LiveResultsProps) => {
                 dataKey="timestamp"
                 className="text-muted-foreground"
                 tick={{ fontSize: 12 }}
-                tickFormatter={(value) => `${Math.floor(value / 1000)}s`}
+                tickFormatter={(value) => `${Math.floor(value)}s`}
               />
               <YAxis
                 className="text-muted-foreground"
@@ -92,48 +92,6 @@ export const LiveResults = ({ data }: LiveResultsProps) => {
                 strokeWidth={2}
                 dot={{ r: 2 }}
                 name="Success %"
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-
-        <div>
-          <h4 className="mb-4 text-sm font-medium text-muted-foreground">
-            Response Times
-          </h4>
-          <ResponsiveContainer width="100%" height={250}>
-            <LineChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" opacity={0.3} />
-              <XAxis
-                dataKey="timestamp"
-                className="text-muted-foreground"
-                tick={{ fontSize: 12 }}
-                tickFormatter={(value) => `${Math.floor(value / 1000)}s`}
-              />
-              <YAxis className="text-muted-foreground" tick={{ fontSize: 12 }} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: "hsl(var(--card))",
-                  border: "1px solid hsl(var(--border))",
-                  borderRadius: "8px",
-                }}
-              />
-              <Legend />
-              <Line
-                type="monotone"
-                dataKey="avgResponseTime"
-                stroke="#3b82f6"
-                strokeWidth={2}
-                dot={{ r: 2 }}
-                name="P50 (ms)"
-              />
-              <Line
-                type="monotone"
-                dataKey="p95ResponseTime"
-                stroke="#f97316"
-                strokeWidth={2}
-                dot={{ r: 2 }}
-                name="P95 (ms)"
               />
             </LineChart>
           </ResponsiveContainer>

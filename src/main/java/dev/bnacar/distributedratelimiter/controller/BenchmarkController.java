@@ -37,11 +37,14 @@ import java.util.concurrent.atomic.AtomicLong;
 public class BenchmarkController {
     private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(BenchmarkController.class);
     private final dev.bnacar.distributedratelimiter.ratelimit.RateLimiterService rateLimiterService;
+    private final dev.bnacar.distributedratelimiter.monitoring.MetricsService metricsService;
     private final ExecutorService benchmarkExecutor;
 
     public BenchmarkController(@org.springframework.beans.factory.annotation.Qualifier("distributedRateLimiterService") 
-                             dev.bnacar.distributedratelimiter.ratelimit.RateLimiterService rateLimiterService) {
+                             dev.bnacar.distributedratelimiter.ratelimit.RateLimiterService rateLimiterService,
+                             dev.bnacar.distributedratelimiter.monitoring.MetricsService metricsService) {
         this.rateLimiterService = rateLimiterService;
+        this.metricsService = metricsService;
         this.benchmarkExecutor = Executors.newCachedThreadPool(r -> {
             Thread t = new Thread(r, "Benchmark-Worker");
             t.setDaemon(true);
@@ -71,6 +74,10 @@ public class BenchmarkController {
             @Valid @RequestBody BenchmarkRequest request) {
         logger.info("Starting benchmark: threads={}, reqPerThread={}, duration={}s", 
                 request.getConcurrentThreads(), request.getRequestsPerThread(), request.getDurationSeconds());
+        
+        // Clear metrics for the test keys physically in Redis before starting
+        String prefix = request.getKeyPrefix() != null ? request.getKeyPrefix() : "benchmark";
+        metricsService.clearMetricsByPrefix(prefix);
         
         long startTime = System.nanoTime();
         

@@ -44,15 +44,18 @@ const LoadTesting = () => {
   const [timeSeriesData, setTimeSeriesData] = useState<TimeSeriesPoint[]>([]);
   const [currentResult, setCurrentResult] = useState<LoadTestResult | null>(null);
   const [historicalResults, setHistoricalResults] = useState<LoadTestResult[]>([]);
-  const [baselineMetrics, setBaselineMetrics] = useState({ allowed: 0, denied: 0 });
+  const [baselineMetrics, setBaselineMetrics] = useState<{ allowed: number; denied: number } | null>(null);
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const intervalRef = useRef<number | null>(null);
   const startTimeRef = useRef<number>(0);
+  const metricsRef = useRef<LoadTestMetrics>(metrics);
+  const lastGraphMetricsRef = useRef({ successful: 0, rateLimited: 0, timestamp: 0 });
 
   // Synchronize with global metrics during test for distributed consistency
   useEffect(() => {
-    if (!isRunning || !realtimeMetrics || !config.targetKey) return;
+    // CRITICAL: Do not monitor until we are running AND have a valid, confirmed baseline
+    if (!isRunning || !realtimeMetrics || !config.targetKey || baselineMetrics === null) return;
 
     // Sum up metrics for all threads (e.g., user:123:1, user:123:2, etc.)
     let currentAllowed = 0;
@@ -68,15 +71,53 @@ const LoadTesting = () => {
     // Calculate delta from baseline
     const totalAllowed = Math.max(0, currentAllowed - baselineMetrics.allowed);
     const totalDenied = Math.max(0, currentDenied - baselineMetrics.denied);
+    const totalRequests = totalAllowed + totalDenied;
 
-    if (totalAllowed + totalDenied > 0) {
-      setMetrics(prev => ({
-        ...prev,
+    if (totalRequests > 0) {
+      const newMetrics = {
+        ...metricsRef.current,
         successful: totalAllowed,
         rateLimited: totalDenied,
-        requestsSent: totalAllowed + totalDenied,
-        successRate: Number(((totalAllowed / (totalAllowed + totalDenied)) * 100).toFixed(1)),
-      }));
+        requestsSent: totalRequests,
+        successRate: Number(((totalAllowed / totalRequests) * 100).toFixed(1)),
+      };
+      
+      setMetrics(newMetrics);
+      metricsRef.current = newMetrics;
+
+      // Update graph points when new metrics arrive
+      const now = Date.now();
+      const elapsed = (now - startTimeRef.current) / 1000;
+      const timeDelta = (now - lastGraphMetricsRef.current.timestamp) / 1000;
+
+      // Add a point if at least 800ms has passed and elapsed > 0
+      if (timeDelta >= 0.8 && elapsed > 0) {
+        // Calculate instantaneous RPS using deltas for real-time throughput
+        const successDiff = totalAllowed - lastGraphMetricsRef.current.successful;
+        const limitedDiff = totalDenied - lastGraphMetricsRef.current.rateLimited;
+        const totalDiff = successDiff + limitedDiff;
+        const instantRps = totalDiff / timeDelta;
+
+        // Use cumulative Success Rate to match the stable trend (e.g., 50 -> 40 -> 36)
+        const overallSuccessRate = (totalAllowed / totalRequests) * 100;
+
+        setTimeSeriesData(prev => [
+          ...prev,
+          {
+            timestamp: Math.round(elapsed),
+            requestsPerSecond: Number(instantRps.toFixed(1)),
+            successRate: Number(overallSuccessRate.toFixed(1)),
+            avgResponseTime: 0,
+            p95ResponseTime: 0,
+          }
+        ].slice(-60));
+
+        lastGraphMetricsRef.current = {
+          successful: totalAllowed,
+          rateLimited: totalDenied,
+          timestamp: now
+        };
+      }
     }
   }, [realtimeMetrics, isRunning, config.targetKey, baselineMetrics]);
 
@@ -87,10 +128,7 @@ const LoadTesting = () => {
     }
 
     // 1. Reset metrics and UI state first
-    setCurrentResult(null);
-    setTimeSeriesData([]);
-    setProgress(0);
-    setMetrics({
+    const initialMetrics = {
       requestsSent: 0,
       successful: 0,
       failed: 0,
@@ -101,66 +139,40 @@ const LoadTesting = () => {
       p99ResponseTime: 0,
       successRate: 100,
       currentRate: 0,
-    });
+    };
+    setCurrentResult(null);
+    setTimeSeriesData([]);
+    setProgress(0);
+    setMetrics(initialMetrics);
+    metricsRef.current = initialMetrics;
+    lastGraphMetricsRef.current = { successful: 0, rateLimited: 0, timestamp: Date.now() };
+    setBaselineMetrics(null); // Clear baseline to force re-sync
 
-    // 2. Fetch fresh metrics for baseline BEFORE setting isRunning to true
-    // This prevents the monitoring useEffect from using a 0 baseline with stale Redis data
-    try {
-      toast.loading("Synchronizing with Redis baseline...", { id: "baseline-sync" });
-      const freshMetrics = await rateLimiterApi.getMetrics();
-      let initialAllowed = 0;
-      let initialDenied = 0;
-      Object.entries(freshMetrics.keyMetrics).forEach(([key, data]) => {
-        if (key.startsWith(config.targetKey)) {
-          initialAllowed += data.allowedRequests;
-          initialDenied += data.deniedRequests;
-        }
-      });
-      setBaselineMetrics({ allowed: initialAllowed, denied: initialDenied });
-      toast.dismiss("baseline-sync");
-    } catch (e) {
-      console.warn("Could not fetch fresh metrics for baseline", e);
-      toast.error("Failed to sync baseline, metrics might be inaccurate", { id: "baseline-sync" });
-      setBaselineMetrics({ allowed: 0, denied: 0 });
-    }
+    // 2. Clear baseline state (the backend will physically reset Redis metrics now)
+    setBaselineMetrics({ allowed: 0, denied: 0 });
+    
+    toast.success("Starting load test on backend...");
 
     // 3. Now start the test and monitoring
     setIsRunning(true);
     startTimeRef.current = Date.now();
-    
-    toast.success("Starting load test on backend...");
+    lastGraphMetricsRef.current.timestamp = startTimeRef.current;
 
     // Create abort controller for cancellation
     abortControllerRef.current = new AbortController();
 
-    // Track data points locally to avoid state closure issues
-    const livePoints: TimeSeriesPoint[] = [];
-
-    // Start progress and live chart update interval
+    // Start progress interval only (graph is updated via useEffect)
     intervalRef.current = window.setInterval(() => {
       const elapsed = (Date.now() - startTimeRef.current) / 1000;
       const progressPercent = Math.min((elapsed / config.duration) * 100, 100);
       setProgress(progressPercent);
       
-      // Update time series data periodically
-      if (Math.floor(elapsed) > livePoints.length) {
-        const newPoint = {
-          timestamp: Date.now(),
-          requestsPerSecond: metrics.requestsSent / Math.max(1, elapsed),
-          successRate: metrics.successRate,
-          avgResponseTime: metrics.avgResponseTime || (1 + Math.random() * 2),
-          p95ResponseTime: metrics.p95ResponseTime || (3 + Math.random() * 4),
-        };
-        livePoints.push(newPoint);
-        setTimeSeriesData([...livePoints]);
-      }
-
       if (progressPercent >= 100) {
         if (intervalRef.current) {
           clearInterval(intervalRef.current);
         }
       }
-    }, 500);
+    }, 200);
 
     try {
       // Call real backend API
@@ -196,21 +208,26 @@ const LoadTesting = () => {
       };
 
       setMetrics(backendMetrics);
+      metricsRef.current = backendMetrics;
       
-      // Final data point based on actual data
+      // Update the final series data
       const finalPoint: TimeSeriesPoint = {
-        timestamp: Date.now(),
+        timestamp: config.duration,
         requestsPerSecond: response.throughputPerSecond,
         successRate: response.successRate,
-        avgResponseTime: response.avgResponseTimeMs,
-        p95ResponseTime: response.p95ResponseTimeMs,
+        avgResponseTime: 0,
+        p95ResponseTime: 0,
       };
       
-      const finalSeries = [...livePoints, finalPoint];
-      setTimeSeriesData(finalSeries);
-      setProgress(100);
+      // Get the existing series data from state using a functional update pattern
+      // to ensure we have the latest points captured by the useEffect
+      setTimeSeriesData(prev => {
+        const finalSeries = [...prev, finalPoint];
+        handleComplete(backendMetrics, finalSeries);
+        return finalSeries;
+      });
       
-      handleComplete(backendMetrics, finalSeries);
+      setProgress(100);
       toast.success(`Load test completed: ${response.successfulRequests}/${response.totalRequests} requests succeeded`);
       
     } catch (error) {
