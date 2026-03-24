@@ -6,6 +6,7 @@ import dev.bnacar.distributedratelimiter.models.RateLimitRequest;
 import dev.bnacar.distributedratelimiter.models.RateLimitResponse;
 import dev.bnacar.distributedratelimiter.models.CompositeRateLimitResponse;
 import dev.bnacar.distributedratelimiter.models.GeographicRateLimitResponse;
+import dev.bnacar.distributedratelimiter.ratelimit.RateLimiter;
 import dev.bnacar.distributedratelimiter.ratelimit.RateLimiterService;
 import dev.bnacar.distributedratelimiter.ratelimit.RateLimitConfig;
 import dev.bnacar.distributedratelimiter.ratelimit.CompositeRateLimiterService;
@@ -176,7 +177,8 @@ public class RateLimitController {
             }
         } else {
             // Standard single-algorithm rate limiting
-            boolean allowed = rateLimiterService.isAllowed(effectiveKey, request.getTokens(), request.getAlgorithm());
+            RateLimiter.ConsumptionResult result = rateLimiterService.isAllowedWithResult(effectiveKey, request.getTokens(), request.getAlgorithm());
+            boolean allowed = result.allowed;
             
             // Record traffic event for adaptive learning
             if (adaptiveRateLimitingEnabled) {
@@ -189,7 +191,7 @@ public class RateLimitController {
                 adaptiveInfo = buildAdaptiveInfo(effectiveKey);
             }
             
-            RateLimitResponse response = new RateLimitResponse(request.getKey(), request.getTokens(), allowed, adaptiveInfo);
+            RateLimitResponse response = new RateLimitResponse(request.getKey(), request.getTokens(), allowed, result.remainingTokens, adaptiveInfo);
             
             // Record the algorithm actually used for the response
             RateLimitAlgorithm usedAlgorithm = request.getAlgorithm();

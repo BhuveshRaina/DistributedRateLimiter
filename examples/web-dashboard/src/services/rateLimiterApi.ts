@@ -15,6 +15,7 @@ interface RateLimitCheckResponse {
   key: string;
   tokensRequested: number;
   allowed: boolean;
+  remainingTokens: number;
 }
 
 interface RateLimiterConfig {

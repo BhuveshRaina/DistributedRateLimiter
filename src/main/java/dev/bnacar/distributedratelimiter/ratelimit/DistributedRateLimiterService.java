@@ -54,11 +54,10 @@ public class DistributedRateLimiterService extends RateLimiterService {
     public boolean isAllowed(String key, int tokens) {
         return isAllowed(key, tokens, null);
     }
-    
-    @Override
-    public boolean isAllowed(String key, int tokens, RateLimitAlgorithm algorithmOverride) {
+
+    public RateLimiter.ConsumptionResult isAllowedWithResult(String key, int tokens, RateLimitAlgorithm algorithmOverride) {
         if (tokens <= 0) {
-            return false;
+            return new RateLimiter.ConsumptionResult(false, 0);
         }
         
         long startTime = System.currentTimeMillis();
@@ -70,22 +69,23 @@ public class DistributedRateLimiterService extends RateLimiterService {
                                        config.getCleanupIntervalMs(), algorithmOverride);
         }
         
-        boolean allowed = false;
+        RateLimiter.ConsumptionResult result;
         RateLimiterBackend backend = getAvailableBackend();
         try {
             RateLimiter rateLimiter = backend.getRateLimiter(key, config);
-            allowed = rateLimiter.tryConsume(tokens);
-        } catch (RuntimeException ex) {
+            result = rateLimiter.tryConsumeWithResult(tokens);
+        } catch (Exception ex) {
+            // Fallback to in-memory only if the primary backend (Redis) failed
             if (backend != fallbackBackend) {
                 usingFallback = true;
                 try {
                     RateLimiter fallbackLimiter = fallbackBackend.getRateLimiter(key, config);
-                    allowed = fallbackLimiter.tryConsume(tokens);
-                } catch (RuntimeException fallbackEx) {
-                    allowed = false;
+                    result = fallbackLimiter.tryConsumeWithResult(tokens);
+                } catch (Exception fallbackEx) {
+                    result = new RateLimiter.ConsumptionResult(false, 0);
                 }
             } else {
-                allowed = false;
+                result = new RateLimiter.ConsumptionResult(false, 0);
             }
         }
 
@@ -94,7 +94,7 @@ public class DistributedRateLimiterService extends RateLimiterService {
         // Record metrics safely
         try {
             if (metricsService != null) {
-                if (allowed) {
+                if (result.allowed) {
                     metricsService.recordAllowedRequest(key, config.getAlgorithm(), tokens);
                 } else {
                     metricsService.recordDeniedRequest(key, config.getAlgorithm(), tokens);
@@ -102,12 +102,16 @@ public class DistributedRateLimiterService extends RateLimiterService {
                 metricsService.recordProcessingTime(key, config.getAlgorithm(), processingTime);
             }
         } catch (Exception e) {
-            // Log metrics error but don't fail the request
             org.slf4j.LoggerFactory.getLogger(DistributedRateLimiterService.class)
                 .warn("Failed to record metrics for key {}: {}", key, e.getMessage());
         }
         
-        return allowed;
+        return result;
+    }
+    
+    @Override
+    public boolean isAllowed(String key, int tokens, RateLimitAlgorithm algorithmOverride) {
+        return isAllowedWithResult(key, tokens, algorithmOverride).allowed;
     }
     
     /**

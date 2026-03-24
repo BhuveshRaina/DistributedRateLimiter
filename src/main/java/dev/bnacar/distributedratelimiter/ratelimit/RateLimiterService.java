@@ -100,10 +100,10 @@ public class RateLimiterService {
         return isAllowed(key, tokens, null);
     }
 
-    public boolean isAllowed(String key, int tokens, RateLimitAlgorithm algorithmOverride) {
+    public RateLimiter.ConsumptionResult isAllowedWithResult(String key, int tokens, RateLimitAlgorithm algorithmOverride) {
         if (tokens <= 0) {
             logger.warn("Invalid token request: key={}, tokens={}", key, tokens);
-            return false;
+            return new RateLimiter.ConsumptionResult(false, 0);
         }
 
         long startTime = System.currentTimeMillis();
@@ -129,38 +129,23 @@ public class RateLimiterService {
         });
         
         holder.updateAccessTime();
-        boolean allowed = holder.tryConsume(tokens);
+        RateLimiter.ConsumptionResult result = holder.rateLimiter.tryConsumeWithResult(tokens);
         long processingTime = System.currentTimeMillis() - startTime;
         RateLimitAlgorithm algorithm = holder.config.getAlgorithm();
         
         // Structured logging for rate limit events
-        if (allowed) {
+        if (result.allowed) {
             logger.debug("Rate limit ALLOWED: key={}, tokens_requested={}, remaining_tokens={}, algorithm={}, processing_time_ms={}", 
-                    key, tokens, getCurrentTokens(holder), algorithm, processingTime);
+                    key, tokens, result.remainingTokens, algorithm, processingTime);
         } else {
             logger.warn("Rate limit VIOLATED: key={}, tokens_requested={}, available_tokens={}, capacity={}, refill_rate={}, algorithm={}, processing_time_ms={}", 
-                    key, tokens, getCurrentTokens(holder), holder.config.getCapacity(), 
+                    key, tokens, result.remainingTokens, holder.config.getCapacity(), 
                     holder.config.getRefillRate(), algorithm, processingTime);
-            
-            // Add rate limit violation context to MDC
-            MDC.put("rate_limit_violation", "true");
-            MDC.put("rate_limit_key", key);
-            MDC.put("rate_limit_tokens_requested", String.valueOf(tokens));
-            MDC.put("rate_limit_available_tokens", String.valueOf(getCurrentTokens(holder)));
-            try {
-                logger.info("Rate limit violation details captured for analysis");
-            } finally {
-                // Clear rate limit specific MDC entries
-                MDC.remove("rate_limit_violation");
-                MDC.remove("rate_limit_key");
-                MDC.remove("rate_limit_tokens_requested");
-                MDC.remove("rate_limit_available_tokens");
-            }
         }
         
         // Record metrics if available
         if (metricsService != null) {
-            if (allowed) {
+            if (result.allowed) {
                 metricsService.recordAllowedRequest(key, algorithm, tokens);
             } else {
                 metricsService.recordDeniedRequest(key, algorithm, tokens);
@@ -168,7 +153,11 @@ public class RateLimiterService {
             metricsService.recordProcessingTime(key, algorithm, processingTime);
         }
         
-        return allowed;
+        return result;
+    }
+
+    public boolean isAllowed(String key, int tokens, RateLimitAlgorithm algorithmOverride) {
+        return isAllowedWithResult(key, tokens, algorithmOverride).allowed;
     }
     
     /**

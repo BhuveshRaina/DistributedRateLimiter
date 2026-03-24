@@ -6,6 +6,7 @@ import { LiveResults } from "@/components/loadtest/LiveResults";
 import { TestResultsSummary } from "@/components/loadtest/TestResultsSummary";
 import { HistoricalTests } from "@/components/loadtest/HistoricalTests";
 import { rateLimiterApi } from "@/services/rateLimiterApi";
+import { useApp } from "@/contexts/AppContext";
 import { toast } from "sonner";
 import {
   LoadTestConfig,
@@ -15,6 +16,7 @@ import {
 } from "@/types/loadTesting";
 
 const LoadTesting = () => {
+  const { realtimeMetrics } = useApp();
   const [config, setConfig] = useState<LoadTestConfig>({
     targetKey: "rl_prod_user123",
     requestRate: 100,
@@ -42,10 +44,41 @@ const LoadTesting = () => {
   const [timeSeriesData, setTimeSeriesData] = useState<TimeSeriesPoint[]>([]);
   const [currentResult, setCurrentResult] = useState<LoadTestResult | null>(null);
   const [historicalResults, setHistoricalResults] = useState<LoadTestResult[]>([]);
+  const [baselineMetrics, setBaselineMetrics] = useState({ allowed: 0, denied: 0 });
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const intervalRef = useRef<number | null>(null);
   const startTimeRef = useRef<number>(0);
+
+  // Synchronize with global metrics during test for distributed consistency
+  useEffect(() => {
+    if (!isRunning || !realtimeMetrics || !config.targetKey) return;
+
+    // Sum up metrics for all threads (e.g., user:123:1, user:123:2, etc.)
+    let currentAllowed = 0;
+    let currentDenied = 0;
+    
+    Object.entries(realtimeMetrics.keyMetrics).forEach(([key, data]) => {
+      if (key.startsWith(config.targetKey)) {
+        currentAllowed += data.allowedRequests;
+        currentDenied += data.deniedRequests;
+      }
+    });
+
+    // Calculate delta from baseline
+    const totalAllowed = Math.max(0, currentAllowed - baselineMetrics.allowed);
+    const totalDenied = Math.max(0, currentDenied - baselineMetrics.denied);
+
+    if (totalAllowed + totalDenied > 0) {
+      setMetrics(prev => ({
+        ...prev,
+        successful: totalAllowed,
+        rateLimited: totalDenied,
+        requestsSent: totalAllowed + totalDenied,
+        successRate: Number(((totalAllowed / (totalAllowed + totalDenied)) * 100).toFixed(1)),
+      }));
+    }
+  }, [realtimeMetrics, isRunning, config.targetKey, baselineMetrics]);
 
   const handleStart = async () => {
     if (!config.targetKey) {
@@ -72,63 +105,44 @@ const LoadTesting = () => {
       successRate: 100,
       currentRate: 0,
     });
+
+    // Capture baseline metrics from current realtimeMetrics
+    if (realtimeMetrics) {
+      let initialAllowed = 0;
+      let initialDenied = 0;
+      Object.entries(realtimeMetrics.keyMetrics).forEach(([key, data]) => {
+        if (key.startsWith(config.targetKey)) {
+          initialAllowed += data.allowedRequests;
+          initialDenied += data.deniedRequests;
+        }
+      });
+      setBaselineMetrics({ allowed: initialAllowed, denied: initialDenied });
+    } else {
+      setBaselineMetrics({ allowed: 0, denied: 0 });
+    }
     
     toast.success("Starting load test on backend...");
-
-    // Fetch actual server config for accurate simulation
-    let serverRefillRate = 2;
-    let serverCapacity = 10;
-    try {
-      const serverConfig = await rateLimiterApi.getConfig();
-      serverRefillRate = serverConfig.refillRate;
-      serverCapacity = serverConfig.capacity;
-      
-      // Check for key-specific override
-      if (serverConfig.keyConfigs && serverConfig.keyConfigs[config.targetKey]) {
-        serverRefillRate = serverConfig.keyConfigs[config.targetKey].refillRate;
-        serverCapacity = serverConfig.keyConfigs[config.targetKey].capacity;
-      }
-    } catch (e) {
-      console.warn("Could not fetch server config, using defaults for simulation", e);
-    }
 
     // Create abort controller for cancellation
     abortControllerRef.current = new AbortController();
 
-    // Track simulation data points locally to avoid state closure issues
+    // Track data points locally to avoid state closure issues
     const livePoints: TimeSeriesPoint[] = [];
 
-    // Start progress simulation
+    // Start progress and live chart update interval
     intervalRef.current = window.setInterval(() => {
       const elapsed = (Date.now() - startTimeRef.current) / 1000;
       const progressPercent = Math.min((elapsed / config.duration) * 100, 100);
       setProgress(progressPercent);
       
-      // Calculate estimated metrics for live display
-      const totalEstimated = Math.floor(config.requestRate * elapsed);
-      // Accurate estimation: (capacity + refill) * number of concurrent buckets / tokens per request
-      const tokensAllowedPerBucket = serverCapacity + Math.floor(serverRefillRate * elapsed);
-      const totalTokensAllowed = tokensAllowedPerBucket * config.concurrency;
-      const successfulEstimated = Math.min(totalEstimated, Math.floor(totalTokensAllowed / config.tokensPerRequest));
-      
-      setMetrics(prev => ({
-        ...prev,
-        requestsSent: totalEstimated,
-        successful: successfulEstimated,
-        rateLimited: Math.max(0, totalEstimated - successfulEstimated),
-        currentRate: Number((config.requestRate * (0.98 + Math.random() * 0.04)).toFixed(1)),
-        successRate: Number(((successfulEstimated / Math.max(1, totalEstimated)) * 100).toFixed(1)),
-        avgResponseTime: Number((1 + Math.random() * 2).toFixed(1)),
-      }));
-      
-      // Add periodic data points for the graph during simulation
+      // Update time series data periodically
       if (Math.floor(elapsed) > livePoints.length) {
         const newPoint = {
           timestamp: Date.now(),
-          requestsPerSecond: config.requestRate * (0.95 + Math.random() * 0.1),
-          successRate: Number(((successfulEstimated / Math.max(1, totalEstimated)) * 100).toFixed(1)),
-          avgResponseTime: Number((1 + Math.random() * 2).toFixed(1)),
-          p95ResponseTime: Number((3 + Math.random() * 4).toFixed(1)),
+          requestsPerSecond: metrics.requestsSent / Math.max(1, elapsed),
+          successRate: metrics.successRate,
+          avgResponseTime: metrics.avgResponseTime || (1 + Math.random() * 2),
+          p95ResponseTime: metrics.p95ResponseTime || (3 + Math.random() * 4),
         };
         livePoints.push(newPoint);
         setTimeSeriesData([...livePoints]);
@@ -139,7 +153,7 @@ const LoadTesting = () => {
           clearInterval(intervalRef.current);
         }
       }
-    }, 100);
+    }, 500);
 
     try {
       // Call real backend API
@@ -155,7 +169,7 @@ const LoadTesting = () => {
         customHeaders: config.customHeaders,
       });
 
-      // Stop the simulation interval
+      // Stop the interval
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
       }

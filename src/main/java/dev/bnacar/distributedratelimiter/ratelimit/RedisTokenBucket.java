@@ -34,9 +34,9 @@ public class RedisTokenBucket implements RateLimiter {
     }
     
     @Override
-    public boolean tryConsume(int tokens) {
+    public ConsumptionResult tryConsumeWithResult(int tokens) {
         if (tokens <= 0) {
-            return false;
+            return new ConsumptionResult(false, getCurrentTokens());
         }
         
         try {
@@ -47,20 +47,35 @@ public class RedisTokenBucket implements RateLimiter {
                 capacity, refillRate, tokens, currentTime
             );
             
-            if (result != null && !result.isEmpty()) {
+            if (result != null && result.size() >= 2) {
                 // Result format: {success, current_tokens, capacity, refill_rate, last_refill}
                 Object successValue = result.get(0);
+                Object tokensValue = result.get(1);
+                
+                boolean allowed = false;
                 if (successValue instanceof Number) {
-                    return ((Number) successValue).intValue() == 1;
+                    allowed = ((Number) successValue).intValue() == 1;
                 }
+                
+                int remaining = capacity;
+                if (tokensValue instanceof Number) {
+                    remaining = ((Number) tokensValue).intValue();
+                }
+                
+                return new ConsumptionResult(allowed, remaining);
             }
             
-            return false;
+            return new ConsumptionResult(false, capacity);
         } catch (Exception e) {
-            // Log error and return false to fail closed
-            // In production, you might want to fall back to local rate limiting
-            throw new RuntimeException("Redis operation failed", e);
+            org.slf4j.LoggerFactory.getLogger(RedisTokenBucket.class)
+                .error("Redis operation failed for key {}: {}", key, e.getMessage());
+            return new ConsumptionResult(false, capacity);
         }
+    }
+    
+    @Override
+    public boolean tryConsume(int tokens) {
+        return tryConsumeWithResult(tokens).allowed;
     }
     
     @Override

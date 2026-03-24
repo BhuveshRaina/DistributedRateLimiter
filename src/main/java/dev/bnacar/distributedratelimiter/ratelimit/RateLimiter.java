@@ -7,6 +7,30 @@ package dev.bnacar.distributedratelimiter.ratelimit;
 public interface RateLimiter {
     
     /**
+     * Result of a consumption attempt.
+     */
+    class ConsumptionResult {
+        public final boolean allowed;
+        public final int remainingTokens;
+        
+        public ConsumptionResult(boolean allowed, int remainingTokens) {
+            this.allowed = allowed;
+            this.remainingTokens = remainingTokens;
+        }
+    }
+    
+    /**
+     * Attempts to consume tokens and returns a result with current state.
+     * 
+     * @param tokens Number of tokens to consume
+     * @return ConsumptionResult with allowed status and remaining tokens
+     */
+    default ConsumptionResult tryConsumeWithResult(int tokens) {
+        boolean allowed = tryConsume(tokens);
+        return new ConsumptionResult(allowed, getCurrentTokens());
+    }
+    
+    /**
      * Attempts to consume the specified number of tokens.
      * 
      * @param tokens Number of tokens to consume

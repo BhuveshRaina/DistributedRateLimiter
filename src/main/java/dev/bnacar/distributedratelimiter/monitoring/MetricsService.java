@@ -76,7 +76,7 @@ public class MetricsService {
     // Cache for aggregated metrics to avoid Redis pressure
     private volatile MetricsResponse cachedMetrics;
     private volatile long lastCacheTime = 0;
-    private static final long CACHE_DURATION_MS = 5000; // 5 second cache as per requirement
+    private static final long CACHE_DURATION_MS = 1000; // 1 second cache for better real-time responsiveness
 
     @Value("${ratelimiter.metrics.active-key-ttl-seconds:300}") // Default to 5 minutes
     private long activeKeyTtlSeconds;

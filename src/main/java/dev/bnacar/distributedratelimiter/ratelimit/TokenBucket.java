@@ -31,14 +31,18 @@ public class TokenBucket implements RateLimiter {
         return refillRate;
     }
 
-    public synchronized boolean tryConsume(int tokens) {
+    public synchronized ConsumptionResult tryConsumeWithResult(int tokens) {
         refill();
         if (tokens <= 0 || tokens > currentTokens) {
-            return false;
+            return new ConsumptionResult(false, currentTokens);
         }
 
         currentTokens -= tokens;
-        return true;
+        return new ConsumptionResult(true, currentTokens);
+    }
+
+    public synchronized boolean tryConsume(int tokens) {
+        return tryConsumeWithResult(tokens).allowed;
     }
 
     private synchronized void refill() {
