@@ -68,6 +68,12 @@ const LoadTesting = () => {
       }
     });
 
+    // Detect Redis reset (metrics cleared by backend)
+    if (currentAllowed < baselineMetrics.allowed || currentDenied < baselineMetrics.denied) {
+      setBaselineMetrics({ allowed: 0, denied: 0 });
+      return;
+    }
+
     // Calculate delta from baseline
     const totalAllowed = Math.max(0, currentAllowed - baselineMetrics.allowed);
     const totalDenied = Math.max(0, currentDenied - baselineMetrics.denied);
@@ -101,16 +107,24 @@ const LoadTesting = () => {
         // Use cumulative Success Rate to match the stable trend (e.g., 50 -> 40 -> 36)
         const overallSuccessRate = (totalAllowed / totalRequests) * 100;
 
-        setTimeSeriesData(prev => [
-          ...prev,
-          {
-            timestamp: Math.round(elapsed),
-            requestsPerSecond: Number(instantRps.toFixed(1)),
-            successRate: Number(overallSuccessRate.toFixed(1)),
-            avgResponseTime: 0,
-            p95ResponseTime: 0,
-          }
-        ].slice(-60));
+        setTimeSeriesData(prev => {
+          // Calculate a 3-point moving average for smoother "live" display
+          const recentPoints = prev.slice(-2);
+          const smoothedRps = recentPoints.length > 0
+            ? (recentPoints.reduce((sum, p) => sum + p.requestsPerSecond, 0) + instantRps) / (recentPoints.length + 1)
+            : instantRps;
+
+          return [
+            ...prev,
+            {
+              timestamp: Math.round(elapsed),
+              requestsPerSecond: Number(smoothedRps.toFixed(1)),
+              successRate: Number(overallSuccessRate.toFixed(1)),
+              avgResponseTime: 0,
+              p95ResponseTime: 0,
+            }
+          ].slice(-60);
+        });
 
         lastGraphMetricsRef.current = {
           successful: totalAllowed,
@@ -141,15 +155,33 @@ const LoadTesting = () => {
       currentRate: 0,
     };
     setCurrentResult(null);
-    setTimeSeriesData([]);
+    
+    // Start with a 0,0 point for a clean graph
+    setTimeSeriesData([{
+      timestamp: 0,
+      requestsPerSecond: 0,
+      successRate: 100,
+      avgResponseTime: 0,
+      p95ResponseTime: 0,
+    }]);
+    
     setProgress(0);
     setMetrics(initialMetrics);
     metricsRef.current = initialMetrics;
     lastGraphMetricsRef.current = { successful: 0, rateLimited: 0, timestamp: Date.now() };
-    setBaselineMetrics(null); // Clear baseline to force re-sync
-
-    // 2. Clear baseline state (the backend will physically reset Redis metrics now)
-    setBaselineMetrics({ allowed: 0, denied: 0 });
+    
+    // 2. Capture actual current metrics as baseline
+    let initialAllowed = 0;
+    let initialDenied = 0;
+    if (realtimeMetrics) {
+      Object.entries(realtimeMetrics.keyMetrics).forEach(([key, data]) => {
+        if (key.startsWith(config.targetKey)) {
+          initialAllowed += data.allowedRequests;
+          initialDenied += data.deniedRequests;
+        }
+      });
+    }
+    setBaselineMetrics({ allowed: initialAllowed, denied: initialDenied });
     
     toast.success("Starting load test on backend...");
 
