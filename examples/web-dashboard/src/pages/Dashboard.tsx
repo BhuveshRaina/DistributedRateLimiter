@@ -142,8 +142,8 @@ const Dashboard = () => {
         .map(([name, data]) => ({
           name,
           activeKeys: 0, // Will be updated by fetchAlgorithmMetrics
-          avgResponseTime: data.totalProcessingTimeMs / (data.allowedRequests + data.deniedRequests || 1),
-          successRate: (data.allowedRequests / (data.allowedRequests + data.deniedRequests || 1)) * 100,
+          avgResponseTime: parseFloat((data.totalProcessingTimeMs / (data.allowedRequests + data.deniedRequests || 1)).toFixed(2)),
+          successRate: parseFloat(((data.allowedRequests / (data.allowedRequests + data.deniedRequests || 1)) * 100).toFixed(2)),
         }));
       
       if (metrics.length > 0) {
@@ -204,8 +204,8 @@ const Dashboard = () => {
           return {
             name,
             activeKeys: data.count,
-            avgResponseTime: backendAlgo ? (backendAlgo.totalProcessingTimeMs / (backendAlgo.allowedRequests + backendAlgo.deniedRequests || 1)) : 0,
-            successRate: backendAlgo ? (backendAlgo.allowedRequests / (backendAlgo.allowedRequests + backendAlgo.deniedRequests || 1) * 100) : 100,
+            avgResponseTime: backendAlgo ? parseFloat((backendAlgo.totalProcessingTimeMs / (backendAlgo.allowedRequests + backendAlgo.deniedRequests || 1)).toFixed(2)) : 0,
+            successRate: backendAlgo ? parseFloat(((backendAlgo.allowedRequests / (backendAlgo.allowedRequests + backendAlgo.deniedRequests || 1)) * 100).toFixed(2)) : 100,
           };
         });
         
