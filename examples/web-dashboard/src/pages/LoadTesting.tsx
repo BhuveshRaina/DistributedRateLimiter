@@ -86,13 +86,10 @@ const LoadTesting = () => {
       return;
     }
 
-    setIsRunning(true);
+    // 1. Reset metrics and UI state first
     setCurrentResult(null);
     setTimeSeriesData([]);
     setProgress(0);
-    startTimeRef.current = Date.now();
-    
-    // Reset metrics
     setMetrics({
       requestsSent: 0,
       successful: 0,
@@ -106,20 +103,30 @@ const LoadTesting = () => {
       currentRate: 0,
     });
 
-    // Capture baseline metrics from current realtimeMetrics
-    if (realtimeMetrics) {
+    // 2. Fetch fresh metrics for baseline BEFORE setting isRunning to true
+    // This prevents the monitoring useEffect from using a 0 baseline with stale Redis data
+    try {
+      toast.loading("Synchronizing with Redis baseline...", { id: "baseline-sync" });
+      const freshMetrics = await rateLimiterApi.getMetrics();
       let initialAllowed = 0;
       let initialDenied = 0;
-      Object.entries(realtimeMetrics.keyMetrics).forEach(([key, data]) => {
+      Object.entries(freshMetrics.keyMetrics).forEach(([key, data]) => {
         if (key.startsWith(config.targetKey)) {
           initialAllowed += data.allowedRequests;
           initialDenied += data.deniedRequests;
         }
       });
       setBaselineMetrics({ allowed: initialAllowed, denied: initialDenied });
-    } else {
+      toast.dismiss("baseline-sync");
+    } catch (e) {
+      console.warn("Could not fetch fresh metrics for baseline", e);
+      toast.error("Failed to sync baseline, metrics might be inaccurate", { id: "baseline-sync" });
       setBaselineMetrics({ allowed: 0, denied: 0 });
     }
+
+    // 3. Now start the test and monitoring
+    setIsRunning(true);
+    startTimeRef.current = Date.now();
     
     toast.success("Starting load test on backend...");
 
