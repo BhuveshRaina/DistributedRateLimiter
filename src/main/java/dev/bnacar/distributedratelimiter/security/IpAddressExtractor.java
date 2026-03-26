@@ -28,19 +28,25 @@ public class IpAddressExtractor {
      * @return the client IP address, or the remote address if no proxy headers are found
      */
     public String getClientIpAddress(HttpServletRequest request) {
+        String ip = null;
         for (String header : IP_HEADER_NAMES) {
-            String ip = request.getHeader(header);
-            if (StringUtils.hasText(ip) && !isUnknownIp(ip)) {
+            String headerValue = request.getHeader(header);
+            if (StringUtils.hasText(headerValue) && !isUnknownIp(headerValue)) {
                 // Handle comma-separated IPs (take the first one)
-                if (ip.contains(",")) {
-                    ip = ip.split(",")[0].trim();
+                if (headerValue.contains(",")) {
+                    ip = headerValue.split(",")[0].trim();
+                } else {
+                    ip = headerValue.trim();
                 }
-                return ip;
+                break;
             }
         }
         
-        // Fall back to the remote address
-        return request.getRemoteAddr();
+        if (ip == null) {
+            ip = request.getRemoteAddr();
+        }
+
+        return ip;
     }
 
     private boolean isUnknownIp(String ip) {

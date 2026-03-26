@@ -70,6 +70,8 @@ public class AdaptiveRateLimitController {
             String key = entry.getKey();
             AdaptiveRateLimitEngine.AdaptiveStatusInfo statusInfo = entry.getValue();
             
+            String displayName = extractDisplayName(key);
+            
             AdaptiveStatus.CurrentLimits currentLimits = new AdaptiveStatus.CurrentLimits(
                 statusInfo.currentCapacity,
                 statusInfo.currentRefillRate
@@ -87,7 +89,7 @@ public class AdaptiveRateLimitController {
                 statusInfo.reasoning
             );
             
-            responseList.add(new AdaptiveStatus(key, currentLimits, adaptiveStatusInfo));
+            responseList.add(new AdaptiveStatus(key, displayName, currentLimits, adaptiveStatusInfo));
         }
         
         return ResponseEntity.ok(responseList);
@@ -108,6 +110,7 @@ public class AdaptiveRateLimitController {
         logger.debug("Getting adaptive status for key: {}", key);
         
         AdaptiveRateLimitEngine.AdaptiveStatusInfo statusInfo = adaptiveEngine.getStatus(key);
+        String displayName = extractDisplayName(key);
         
         // Build response
         AdaptiveStatus.CurrentLimits currentLimits = new AdaptiveStatus.CurrentLimits(
@@ -127,9 +130,24 @@ public class AdaptiveRateLimitController {
             statusInfo.reasoning
         );
         
-        AdaptiveStatus response = new AdaptiveStatus(key, currentLimits, adaptiveStatusInfo);
+        AdaptiveStatus response = new AdaptiveStatus(key, displayName, currentLimits, adaptiveStatusInfo);
         
         return ResponseEntity.ok(response);
+    }
+
+    private String extractDisplayName(String key) {
+        return stripNumericSuffix(key);
+    }
+    
+    private String stripNumericSuffix(String key) {
+        int lastColon = key.lastIndexOf(':');
+        if (lastColon > 0) {
+            String suffix = key.substring(lastColon + 1);
+            if (suffix.matches("\\d+")) {
+                return key.substring(0, lastColon);
+            }
+        }
+        return key;
     }
     
     /**

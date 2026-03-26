@@ -19,6 +19,7 @@ export interface AdaptiveStatusInfo {
 
 export interface AdaptiveStatus {
   key: string;
+  displayName: string;
   currentLimits: CurrentLimits;
   adaptiveStatus: AdaptiveStatusInfo;
   timestamp: string;

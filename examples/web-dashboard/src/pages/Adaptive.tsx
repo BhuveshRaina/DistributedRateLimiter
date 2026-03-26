@@ -354,7 +354,14 @@ const Adaptive = () => {
               <TableBody>
                 {adaptiveStatuses.map((status) => (
                   <TableRow key={status.key}>
-                    <TableCell className="font-mono text-sm">{status.key}</TableCell>
+                    <TableCell className="font-mono text-sm">
+                      <div className="flex flex-col">
+                        <span className="font-semibold">{status.displayName}</span>
+                        <span className="text-[10px] text-muted-foreground truncate max-w-[150px]" title={status.key}>
+                          {status.key}
+                        </span>
+                      </div>
+                    </TableCell>
                     <TableCell>
                       <Badge className={`gap-1 ${getModeColor(status.adaptiveStatus.mode)}`}>
                         {getModeIcon(status.adaptiveStatus.mode)}

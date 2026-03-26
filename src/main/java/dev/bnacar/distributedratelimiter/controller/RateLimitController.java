@@ -129,8 +129,8 @@ public class RateLimitController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
         }
         
-        // Create IP-based rate limiting key
-        String effectiveKey = ipSecurityService.createIpBasedKey(request.getKey(), clientIp);
+        // Use the raw key provided in the request
+        String effectiveKey = request.getKey();
         
         // Extract headers for geographic detection
         Map<String, String> headers = extractGeographicHeaders(httpRequest);

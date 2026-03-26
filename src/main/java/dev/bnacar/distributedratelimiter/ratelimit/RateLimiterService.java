@@ -107,7 +107,11 @@ public class RateLimiterService {
         }
 
         long startTime = System.currentTimeMillis();
-        BucketHolder holder = buckets.computeIfAbsent(key, k -> {
+        
+        // Resolve canonical key (strips thread suffixes)
+        String sharedKey = configurationResolver.resolveBaseKey(key);
+        
+        BucketHolder holder = buckets.computeIfAbsent(sharedKey, k -> {
             RateLimitConfig config = configurationResolver.resolveConfig(k);
             
             // Apply algorithm override if provided
@@ -131,10 +135,10 @@ public class RateLimiterService {
         holder.updateAccessTime();
         
         // Check if configuration has changed (e.g. adaptive limit applied)
-        RateLimitConfig currentConfig = configurationResolver.resolveConfig(key);
+        RateLimitConfig currentConfig = configurationResolver.resolveConfig(sharedKey);
         if (!currentConfig.equals(holder.config)) {
             logger.info("Configuration changed for key: {}, updating bucket. Old: {}/{}, New: {}/{}", 
-                       key, holder.config.getCapacity(), holder.config.getRefillRate(),
+                       sharedKey, holder.config.getCapacity(), holder.config.getRefillRate(),
                        currentConfig.getCapacity(), currentConfig.getRefillRate());
             
             // Create new rate limiter with updated config
@@ -155,24 +159,24 @@ public class RateLimiterService {
         long processingTime = System.currentTimeMillis() - startTime;
         RateLimitAlgorithm algorithm = holder.config.getAlgorithm();
         
-        // Structured logging for rate limit events
+        // Structured logging using sharedKey
         if (result.allowed) {
             logger.debug("Rate limit ALLOWED: key={}, tokens_requested={}, remaining_tokens={}, algorithm={}, processing_time_ms={}", 
-                    key, tokens, result.remainingTokens, algorithm, processingTime);
+                    sharedKey, tokens, result.remainingTokens, algorithm, processingTime);
         } else {
             logger.warn("Rate limit VIOLATED: key={}, tokens_requested={}, available_tokens={}, capacity={}, refill_rate={}, algorithm={}, processing_time_ms={}", 
-                    key, tokens, result.remainingTokens, holder.config.getCapacity(), 
+                    sharedKey, tokens, result.remainingTokens, holder.config.getCapacity(), 
                     holder.config.getRefillRate(), algorithm, processingTime);
         }
         
-        // Record metrics if available
+        // Record metrics using sharedKey
         if (metricsService != null) {
             if (result.allowed) {
-                metricsService.recordAllowedRequest(key, algorithm, tokens);
+                metricsService.recordAllowedRequest(sharedKey, algorithm, tokens);
             } else {
-                metricsService.recordDeniedRequest(key, algorithm, tokens);
+                metricsService.recordDeniedRequest(sharedKey, algorithm, tokens);
             }
-            metricsService.recordProcessingTime(key, algorithm, processingTime);
+            metricsService.recordProcessingTime(sharedKey, algorithm, processingTime);
         }
         
         return result;

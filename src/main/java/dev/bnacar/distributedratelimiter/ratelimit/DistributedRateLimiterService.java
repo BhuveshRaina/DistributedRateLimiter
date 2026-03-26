@@ -61,7 +61,11 @@ public class DistributedRateLimiterService extends RateLimiterService {
         }
         
         long startTime = System.currentTimeMillis();
-        RateLimitConfig config = configurationResolver.resolveConfig(key);
+        
+        // Resolve the shared bucket key (strips suffixes like :1, :2)
+        String sharedKey = configurationResolver.resolveBaseKey(key);
+        
+        RateLimitConfig config = configurationResolver.resolveConfig(sharedKey);
         
         // Apply algorithm override if provided
         if (algorithmOverride != null) {
@@ -72,14 +76,14 @@ public class DistributedRateLimiterService extends RateLimiterService {
         RateLimiter.ConsumptionResult result;
         RateLimiterBackend backend = getAvailableBackend();
         try {
-            RateLimiter rateLimiter = backend.getRateLimiter(key, config);
+            RateLimiter rateLimiter = backend.getRateLimiter(sharedKey, config);
             result = rateLimiter.tryConsumeWithResult(tokens);
         } catch (Exception ex) {
             // Fallback to in-memory only if the primary backend (Redis) failed
             if (backend != fallbackBackend) {
                 usingFallback = true;
                 try {
-                    RateLimiter fallbackLimiter = fallbackBackend.getRateLimiter(key, config);
+                    RateLimiter fallbackLimiter = fallbackBackend.getRateLimiter(sharedKey, config);
                     result = fallbackLimiter.tryConsumeWithResult(tokens);
                 } catch (Exception fallbackEx) {
                     result = new RateLimiter.ConsumptionResult(false, 0);
@@ -91,19 +95,19 @@ public class DistributedRateLimiterService extends RateLimiterService {
 
         long processingTime = System.currentTimeMillis() - startTime;
         
-        // Record metrics safely
+        // Record metrics using the sharedKey for accurate aggregation
         try {
             if (metricsService != null) {
                 if (result.allowed) {
-                    metricsService.recordAllowedRequest(key, config.getAlgorithm(), tokens);
+                    metricsService.recordAllowedRequest(sharedKey, config.getAlgorithm(), tokens);
                 } else {
-                    metricsService.recordDeniedRequest(key, config.getAlgorithm(), tokens);
+                    metricsService.recordDeniedRequest(sharedKey, config.getAlgorithm(), tokens);
                 }
-                metricsService.recordProcessingTime(key, config.getAlgorithm(), processingTime);
+                metricsService.recordProcessingTime(sharedKey, config.getAlgorithm(), processingTime);
             }
         } catch (Exception e) {
             org.slf4j.LoggerFactory.getLogger(DistributedRateLimiterService.class)
-                .warn("Failed to record metrics for key {}: {}", key, e.getMessage());
+                .warn("Failed to record metrics for key {}: {}", sharedKey, e.getMessage());
         }
         
         return result;

@@ -52,19 +52,6 @@ public class ConfigurationResolver {
         if (configuration.getKeys().containsKey(key)) {
             return true;
         }
-
-        // 1b. Check for original key if it's an IP-based key
-        // Format: ip:ADDRESS:ORIGINAL_KEY
-        if (key.startsWith("ip:")) {
-            int firstColon = key.indexOf(':');
-            int secondColon = key.indexOf(':', firstColon + 1);
-            if (secondColon != -1) {
-                String originalKey = key.substring(secondColon + 1);
-                if (configuration.getKeys().containsKey(originalKey)) {
-                    return true;
-                }
-            }
-        }
         
         // 2. Check pattern matches
         for (String pattern : configuration.getPatterns().keySet()) {
@@ -86,9 +73,11 @@ public class ConfigurationResolver {
      * 5. Default configuration
      */
     public RateLimitConfig resolveConfig(String key) {
+        String canonicalKey = resolveBaseKey(key);
+        
         // 1. Check for active scheduled overrides first
         if (scheduleManager != null) {
-            RateLimitConfig scheduledConfig = scheduleManager.getActiveConfig(key);
+            RateLimitConfig scheduledConfig = scheduleManager.getActiveConfig(canonicalKey);
             if (scheduledConfig != null) {
                 return scheduledConfig;
             }
@@ -96,11 +85,11 @@ public class ConfigurationResolver {
 
         // 2. Check for adaptive limits (includes manual overrides from adaptive engine)
         if (adaptiveEngine != null) {
-            AdaptiveRateLimitEngine.AdaptedLimits adapted = adaptiveEngine.getAdaptedLimits(key);
+            AdaptiveRateLimitEngine.AdaptedLimits adapted = adaptiveEngine.getAdaptedLimits(canonicalKey);
             if (adapted != null) {
+                // IMPORTANT: We bypass cache here to ensure overrides are applied instantly
                 // Create a config using adapted values
-                // Use default cleanup and algorithm from base config
-                RateLimitConfig baseConfig = getBaseConfig(key);
+                RateLimitConfig baseConfig = getBaseConfig(canonicalKey);
                 return new RateLimitConfig(
                     adapted.adaptedCapacity,
                     adapted.adaptedRefillRate,
@@ -110,7 +99,7 @@ public class ConfigurationResolver {
             }
         }
         
-        // 3. Check cache
+        // 3. Check cache for standard configurations
         RateLimitConfig cached = configCache.get(key);
         if (cached != null) {
             return cached;
@@ -128,42 +117,72 @@ public class ConfigurationResolver {
      * Helper to get the non-adaptive base configuration for a key.
      */
     public RateLimitConfig getBaseConfig(String key) {
+        String canonicalKey = resolveBaseKey(key);
+        
         // Check cache for base config
-        RateLimitConfig cached = configCache.get(key);
+        RateLimitConfig cached = configCache.get(canonicalKey);
         if (cached != null) return cached;
 
-        RateLimitConfig resolved = doResolveConfig(key);
-        configCache.put(key, resolved);
+        RateLimitConfig resolved = doResolveConfig(canonicalKey);
+        configCache.put(canonicalKey, resolved);
         return resolved;
     }
     
-    private RateLimitConfig doResolveConfig(String key) {
-        // 1. Check exact key match
-        RateLimiterConfiguration.KeyConfig keyConfig = configuration.getKeys().get(key);
-        if (keyConfig != null) {
-            return createConfig(keyConfig);
+    /**
+     * Resolve the canonical base key for a given input key.
+     * This handles stripping IP prefixes and thread suffixes to find the shared bucket key.
+     */
+    public String resolveBaseKey(String key) {
+        // Just strip numeric suffix as IP prefixes are no longer added
+        return stripNumericSuffix(key);
+    }
+
+    private String stripNumericSuffix(String key) {
+        int lastColon = key.lastIndexOf(':');
+        if (lastColon > 0) {
+            String suffix = key.substring(lastColon + 1);
+            if (suffix.matches("\\d+")) {
+                return key.substring(0, lastColon);
+            }
         }
+        return key;
+    }
+
+    private RateLimitConfig doResolveConfig(String key) {
+        String canonicalKey = resolveBaseKey(key);
         
-        // 1b. Check prefix match for suffixed keys (e.g. key:0, key:1)
+        // 1. Try to resolve the key as-is (using canonical version)
+        RateLimitConfig config = resolveFromExactOrSuffix(canonicalKey);
+        if (config != null) return config;
+
+        // 2. Check pattern matches (original key)
+        for (Map.Entry<String, RateLimiterConfiguration.KeyConfig> entry : configuration.getPatterns().entrySet()) {
+            if (matchesPattern(canonicalKey, entry.getKey())) {
+                return createConfig(entry.getValue());
+            }
+        }
+
+        // 3. Return default configuration
+        return configuration.getDefaultConfig();
+    }
+
+    /**
+     * Helper to resolve a key by checking exact match or prefix (for suffixes like :1, :2).
+     */
+    private RateLimitConfig resolveFromExactOrSuffix(String key) {
+        // Exact match
+        RateLimiterConfiguration.KeyConfig exact = configuration.getKeys().get(key);
+        if (exact != null) return createConfig(exact);
+
+        // Suffix match (strip the last colon part)
         int lastColon = key.lastIndexOf(':');
         if (lastColon > 0) {
             String prefix = key.substring(0, lastColon);
             RateLimiterConfiguration.KeyConfig prefixConfig = configuration.getKeys().get(prefix);
-            if (prefixConfig != null) {
-                return createConfig(prefixConfig);
-            }
+            if (prefixConfig != null) return createConfig(prefixConfig);
         }
         
-        // 2. Check pattern matches
-        for (Map.Entry<String, RateLimiterConfiguration.KeyConfig> entry : configuration.getPatterns().entrySet()) {
-            String pattern = entry.getKey();
-            if (matchesPattern(key, pattern)) {
-                return createConfig(entry.getValue());
-            }
-        }
-        
-        // 3. Return default configuration
-        return configuration.getDefaultConfig();
+        return null;
     }
     
     /**

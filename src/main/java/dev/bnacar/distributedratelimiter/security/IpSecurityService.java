@@ -46,9 +46,6 @@ public class IpSecurityService {
      * @return a combined key for IP-based rate limiting
      */
     public String createIpBasedKey(String originalKey, String ipAddress) {
-        if (!StringUtils.hasText(ipAddress)) {
-            return originalKey;
-        }
-        return "ip:" + ipAddress + ":" + originalKey;
+        return originalKey;
     }
 }

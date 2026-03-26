@@ -9,6 +9,7 @@ import java.util.Map;
 public class AdaptiveStatus {
     
     private String key;
+    private String displayName;
     private CurrentLimits currentLimits;
     private AdaptiveStatusInfo adaptiveStatus;
     private Instant timestamp;
@@ -17,8 +18,9 @@ public class AdaptiveStatus {
         this.timestamp = Instant.now();
     }
     
-    public AdaptiveStatus(String key, CurrentLimits currentLimits, AdaptiveStatusInfo adaptiveStatus) {
+    public AdaptiveStatus(String key, String displayName, CurrentLimits currentLimits, AdaptiveStatusInfo adaptiveStatus) {
         this.key = key;
+        this.displayName = displayName;
         this.currentLimits = currentLimits;
         this.adaptiveStatus = adaptiveStatus;
         this.timestamp = Instant.now();
@@ -31,6 +33,14 @@ public class AdaptiveStatus {
     
     public void setKey(String key) {
         this.key = key;
+    }
+
+    public String getDisplayName() {
+        return displayName;
+    }
+
+    public void setDisplayName(String displayName) {
+        this.displayName = displayName;
     }
     
     public CurrentLimits getCurrentLimits() {

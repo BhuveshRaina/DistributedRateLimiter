@@ -64,14 +64,19 @@ end
 local time_elapsed = math.max(0, current_time - last_leak_time)
 local tokens_to_process = math.floor(time_elapsed / 1000 * leak_rate)
 
-if tokens_to_process > 0 and queue_size > 0 then
-    -- Process (remove) requests from the front of the queue
-    local processed_count = math.min(tokens_to_process, queue_size)
-    for i = 1, processed_count do
-        redis.call('LPOP', queue_list_key)
+if tokens_to_process > 0 then
+    if queue_size > 0 then
+        -- Process (remove) requests from the front of the queue
+        local processed_count = math.min(tokens_to_process, queue_size)
+        for i = 1, processed_count do
+            redis.call('LPOP', queue_list_key)
+        end
+        queue_size = queue_size - processed_count
     end
-    queue_size = queue_size - processed_count
-    last_leak_time = current_time
+    
+    -- Update last_leak_time by the time actually used for processing tokens
+    local time_consumed = math.floor(tokens_to_process * 1000 / leak_rate)
+    last_leak_time = last_leak_time + time_consumed
 end
 
 -- Handle new request

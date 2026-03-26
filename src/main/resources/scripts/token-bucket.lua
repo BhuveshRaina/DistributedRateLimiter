@@ -41,6 +41,12 @@ local tokens_to_add = math.floor(time_elapsed / 1000 * refill_rate)
 -- Update token count, capped at capacity
 current_tokens = math.min(capacity, current_tokens + tokens_to_add)
 
+-- Update last_refill by the time actually used for whole tokens
+if tokens_to_add > 0 then
+    local time_consumed = math.floor(tokens_to_add * 1000 / refill_rate)
+    last_refill = last_refill + time_consumed
+end
+
 -- Check if we can consume the requested tokens
 local success = 0
 if tokens_to_consume == 0 then
@@ -51,10 +57,10 @@ elseif tokens_to_consume > 0 and current_tokens >= tokens_to_consume then
     success = 1
 end
 
--- Always update state to refresh last_refill time
+-- Always update state
 redis.call('HMSET', bucket_key, 
     'tokens', current_tokens,
-    'last_refill', current_time,
+    'last_refill', last_refill,
     'capacity', capacity,
     'refill_rate', refill_rate)
 
