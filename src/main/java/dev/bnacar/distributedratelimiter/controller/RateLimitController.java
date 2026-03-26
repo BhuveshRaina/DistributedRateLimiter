@@ -11,6 +11,7 @@ import dev.bnacar.distributedratelimiter.ratelimit.RateLimiterService;
 import dev.bnacar.distributedratelimiter.ratelimit.RateLimitConfig;
 import dev.bnacar.distributedratelimiter.ratelimit.CompositeRateLimiterService;
 import dev.bnacar.distributedratelimiter.ratelimit.RateLimitAlgorithm;
+import dev.bnacar.distributedratelimiter.ratelimit.ConfigurationResolver;
 import dev.bnacar.distributedratelimiter.geo.GeographicRateLimitService;
 import dev.bnacar.distributedratelimiter.security.ApiKeyService;
 import dev.bnacar.distributedratelimiter.security.IpAddressExtractor;

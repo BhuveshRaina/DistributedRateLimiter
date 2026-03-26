@@ -5,6 +5,7 @@ import dev.bnacar.distributedratelimiter.ratelimit.RateLimitConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -50,7 +51,7 @@ public class AdaptiveRateLimitEngine {
             UserBehaviorModeler behaviorModeler,
             AnomalyDetector anomalyDetector,
             AdaptiveMLModel adaptiveModel,
-            ConfigurationResolver configurationResolver,
+            @Lazy ConfigurationResolver configurationResolver,
             @Value("${ratelimiter.adaptive.enabled:true}") boolean enabled,
             @Value("${ratelimiter.adaptive.evaluation-interval-ms:300000}") long evaluationIntervalMs,
             @Value("${ratelimiter.adaptive.min-confidence-threshold:0.7}") double minConfidenceThreshold,
@@ -127,7 +128,7 @@ public class AdaptiveRateLimitEngine {
         }
         
         // Get current configuration
-        RateLimitConfig currentConfig = configurationResolver.resolveConfig(key);
+        RateLimitConfig currentConfig = configurationResolver.getBaseConfig(key);
         
         // Collect signals from all components
         TrafficPattern pattern = trafficAnalyzer.analyzePattern(key);
@@ -146,7 +147,7 @@ public class AdaptiveRateLimitEngine {
      */
     private void applyAdaptation(String key, AdaptationDecision decision) {
         // Get original configuration
-        RateLimitConfig originalConfig = configurationResolver.resolveConfig(key);
+        RateLimitConfig originalConfig = configurationResolver.getBaseConfig(key);
         
         // Apply safety constraints
         int newCapacity = enforceConstraints(decision.getRecommendedCapacity(), 
@@ -226,7 +227,7 @@ public class AdaptiveRateLimitEngine {
         // Check for manual override first
         AdaptationOverride override = manualOverrides.get(key);
         if (override != null) {
-            RateLimitConfig originalConfig = configurationResolver.resolveConfig(key);
+            RateLimitConfig originalConfig = configurationResolver.getBaseConfig(key);
             Map<String, String> reasoning = new HashMap<>();
             reasoning.put("decision", "Manual override active");
             reasoning.put("reason", override.reason);
@@ -245,7 +246,7 @@ public class AdaptiveRateLimitEngine {
         AdaptedLimits adapted = adaptedLimits.get(key);
         
         if (adapted == null) {
-            RateLimitConfig config = configurationResolver.resolveConfig(key);
+            RateLimitConfig config = configurationResolver.getBaseConfig(key);
             
             // Check if key is being tracked (in learning phase)
             if (trackedKeys.contains(key)) {
@@ -310,7 +311,7 @@ public class AdaptiveRateLimitEngine {
         // Check for manual override first
         AdaptationOverride override = manualOverrides.get(key);
         if (override != null) {
-            RateLimitConfig originalConfig = configurationResolver.resolveConfig(key);
+            RateLimitConfig originalConfig = configurationResolver.getBaseConfig(key);
             return new AdaptedLimits(
                 originalConfig.getCapacity(),
                 originalConfig.getRefillRate(),

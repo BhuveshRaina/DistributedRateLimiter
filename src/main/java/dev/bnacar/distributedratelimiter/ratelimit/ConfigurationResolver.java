@@ -40,7 +40,7 @@ public class ConfigurationResolver {
      * Set the adaptive engine for adaptive-based configuration resolution.
      */
     @Autowired(required = false)
-    public void setAdaptiveEngine(AdaptiveRateLimitEngine adaptiveEngine) {
+    public void setAdaptiveEngine(@org.springframework.context.annotation.Lazy AdaptiveRateLimitEngine adaptiveEngine) {
         this.adaptiveEngine = adaptiveEngine;
     }
     
@@ -127,7 +127,7 @@ public class ConfigurationResolver {
     /**
      * Helper to get the non-adaptive base configuration for a key.
      */
-    private RateLimitConfig getBaseConfig(String key) {
+    public RateLimitConfig getBaseConfig(String key) {
         // Check cache for base config
         RateLimitConfig cached = configCache.get(key);
         if (cached != null) return cached;
