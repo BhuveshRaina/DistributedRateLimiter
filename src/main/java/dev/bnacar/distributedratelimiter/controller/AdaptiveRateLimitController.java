@@ -21,6 +21,7 @@ import jakarta.validation.constraints.NotBlank;
 @RestController
 @RequestMapping("/api/ratelimit/adaptive")
 @Tag(name = "Adaptive Rate Limiting", description = "Machine learning-driven adaptive rate limit management")
+@CrossOrigin(origins = {"http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173", "http://127.0.0.1:3000", "http://[::1]:5173", "http://[::1]:3000"})
 public class AdaptiveRateLimitController {
     
     private static final Logger logger = LoggerFactory.getLogger(AdaptiveRateLimitController.class);
@@ -47,6 +48,49 @@ public class AdaptiveRateLimitController {
     
     public AdaptiveRateLimitController(AdaptiveRateLimitEngine adaptiveEngine) {
         this.adaptiveEngine = adaptiveEngine;
+    }
+    
+    /**
+     * Get adaptive status for all keys
+     */
+    @GetMapping("/all-statuses")
+    @Operation(
+        summary = "Get all adaptive statuses",
+        description = "Retrieve adaptive rate limiting status for all tracked keys in a single request"
+    )
+    public ResponseEntity<java.util.List<AdaptiveStatus>> getAllAdaptiveStatuses() {
+        logger.debug("Getting all adaptive statuses");
+        
+        java.util.Map<String, AdaptiveRateLimitEngine.AdaptiveStatusInfo> allStatuses = 
+            adaptiveEngine.getAllStatuses();
+            
+        java.util.List<AdaptiveStatus> responseList = new java.util.ArrayList<>();
+        
+        for (java.util.Map.Entry<String, AdaptiveRateLimitEngine.AdaptiveStatusInfo> entry : allStatuses.entrySet()) {
+            String key = entry.getKey();
+            AdaptiveRateLimitEngine.AdaptiveStatusInfo statusInfo = entry.getValue();
+            
+            AdaptiveStatus.CurrentLimits currentLimits = new AdaptiveStatus.CurrentLimits(
+                statusInfo.currentCapacity,
+                statusInfo.currentRefillRate
+            );
+            
+            AdaptiveStatus.RecommendedLimits recommendedLimits = new AdaptiveStatus.RecommendedLimits(
+                statusInfo.currentCapacity,
+                statusInfo.currentRefillRate
+            );
+            
+            AdaptiveStatus.AdaptiveStatusInfo adaptiveStatusInfo = new AdaptiveStatus.AdaptiveStatusInfo(
+                statusInfo.mode,
+                statusInfo.confidence,
+                recommendedLimits,
+                statusInfo.reasoning
+            );
+            
+            responseList.add(new AdaptiveStatus(key, currentLimits, adaptiveStatusInfo));
+        }
+        
+        return ResponseEntity.ok(responseList);
     }
     
     /**

@@ -96,13 +96,13 @@ public class AdaptiveMLModel {
         output.confidence = 0.7;
         output.shouldAdapt = false;
         
-        // Rule 1: System under stress - reduce limits
-        if (health.getCpuUtilization() > 0.8 || health.getResponseTimeP95() > 2000) {
+        // Rule 1: System under stress - reduce limits (Temporarily set to 1% for testing)
+        if (health.getCpuUtilization() > 0.01 || health.getResponseTimeP95() > 2000) {
             output.shouldAdapt = true;
-            output.capacity = (int) (currentCapacity * 0.7);
-            output.refillRate = (int) (currentRefillRate * 0.7);
-            output.confidence = 0.85;
-            output.reason = "System under stress";
+            output.capacity = (int) (currentCapacity * 0.5); // Reduce by 50%
+            output.refillRate = (int) (currentRefillRate * 0.5);
+            output.confidence = 0.95;
+            output.reason = "System under stress (CPU > 1%)";
             return output;
         }
         
@@ -127,26 +127,26 @@ public class AdaptiveMLModel {
         }
         
         // Rule 4: System has capacity and no anomalies - increase limits
-        if (health.getCpuUtilization() < 0.3 && 
+        if (health.getCpuUtilization() < 0.03 && 
             health.getErrorRate() < 0.001 && 
             !anomaly.isAnomaly()) {
             output.shouldAdapt = true;
             output.capacity = (int) (currentCapacity * 1.3);
             output.refillRate = (int) (currentRefillRate * 1.3);
             output.confidence = 0.75;
-            output.reason = "System has capacity";
+            output.reason = "System has high capacity (CPU < 3%)";
             return output;
         }
         
         // Rule 5: Moderate capacity - small increase
-        if (health.getCpuUtilization() < 0.5 && 
+        if (health.getCpuUtilization() < 0.05 && 
             health.getErrorRate() < 0.005 && 
             !anomaly.isAnomaly()) {
             output.shouldAdapt = true;
             output.capacity = (int) (currentCapacity * 1.1);
             output.refillRate = (int) (currentRefillRate * 1.1);
             output.confidence = 0.65;
-            output.reason = "System stable with available capacity";
+            output.reason = "System stable with moderate capacity (CPU < 5%)";
             return output;
         }
         

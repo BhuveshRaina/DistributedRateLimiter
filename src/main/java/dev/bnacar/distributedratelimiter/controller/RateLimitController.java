@@ -54,6 +54,7 @@ public class RateLimitController {
     private final IpSecurityService ipSecurityService;
     private final IpAddressExtractor ipAddressExtractor;
     private final AdaptiveRateLimitEngine adaptiveEngine;
+    private final ConfigurationResolver configurationResolver;
     
     @Value("${ratelimiter.geographic.enabled:false}")
     private boolean geographicRateLimitingEnabled;
@@ -61,13 +62,17 @@ public class RateLimitController {
     @Value("${ratelimiter.adaptive.enabled:true}")
     private boolean adaptiveRateLimitingEnabled;
 
+    @Value("${ratelimiter.strict-mode:false}")
+    private boolean strictMode;
+
     public RateLimitController(RateLimiterService rateLimiterService,
                               CompositeRateLimiterService compositeRateLimiterService,
                               @org.springframework.beans.factory.annotation.Autowired(required = false) GeographicRateLimitService geographicRateLimitService,
                               ApiKeyService apiKeyService,
                               IpSecurityService ipSecurityService,
                               IpAddressExtractor ipAddressExtractor,
-                              AdaptiveRateLimitEngine adaptiveEngine) {
+                              AdaptiveRateLimitEngine adaptiveEngine,
+                              ConfigurationResolver configurationResolver) {
         this.rateLimiterService = rateLimiterService;
         this.compositeRateLimiterService = compositeRateLimiterService;
         this.geographicRateLimitService = geographicRateLimitService;
@@ -75,6 +80,7 @@ public class RateLimitController {
         this.ipSecurityService = ipSecurityService;
         this.ipAddressExtractor = ipAddressExtractor;
         this.adaptiveEngine = adaptiveEngine;
+        this.configurationResolver = configurationResolver;
     }
 
     @PostMapping("/check")

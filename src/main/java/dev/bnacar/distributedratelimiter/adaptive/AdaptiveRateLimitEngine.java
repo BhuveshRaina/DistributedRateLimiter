@@ -84,10 +84,14 @@ public class AdaptiveRateLimitEngine {
             return;
         }
         
-        logger.debug("Starting adaptive evaluation cycle");
-        
-        // Get all active keys (would need to integrate with RateLimiterService)
+        // Get all active keys
         Set<String> activeKeys = getActiveKeys();
+        
+        if (activeKeys.isEmpty()) {
+            return;
+        }
+
+        logger.debug("Starting adaptive evaluation cycle for {} keys", activeKeys.size());
         
         int adaptedCount = 0;
         for (String key : activeKeys) {
@@ -187,6 +191,20 @@ public class AdaptiveRateLimitEngine {
     }
     
     /**
+     * Get adaptive status for all tracked keys
+     */
+    public Map<String, AdaptiveStatusInfo> getAllStatuses() {
+        Map<String, AdaptiveStatusInfo> statuses = new HashMap<>();
+        Set<String> allKeys = getActiveKeys();
+        
+        for (String key : allKeys) {
+            statuses.put(key, getStatus(key));
+        }
+        
+        return statuses;
+    }
+
+    /**
      * Get active keys for evaluation
      * Returns all keys that have been tracked during traffic recording
      */
@@ -205,10 +223,47 @@ public class AdaptiveRateLimitEngine {
      * Get adaptive status for a key
      */
     public AdaptiveStatusInfo getStatus(String key) {
+        // Check for manual override first
+        AdaptationOverride override = manualOverrides.get(key);
+        if (override != null) {
+            RateLimitConfig originalConfig = configurationResolver.resolveConfig(key);
+            Map<String, String> reasoning = new HashMap<>();
+            reasoning.put("decision", "Manual override active");
+            reasoning.put("reason", override.reason);
+            
+            return new AdaptiveStatusInfo(
+                "OVERRIDE",
+                1.0,
+                originalConfig.getCapacity(),
+                originalConfig.getRefillRate(),
+                override.capacity,
+                override.refillRate,
+                reasoning
+            );
+        }
+
         AdaptedLimits adapted = adaptedLimits.get(key);
         
         if (adapted == null) {
             RateLimitConfig config = configurationResolver.resolveConfig(key);
+            
+            // Check if key is being tracked (in learning phase)
+            if (trackedKeys.contains(key)) {
+                Map<String, String> reasoning = new HashMap<>();
+                reasoning.put("decision", "Collecting traffic patterns");
+                reasoning.put("status", "Learning in progress");
+                
+                return new AdaptiveStatusInfo(
+                    "LEARNING",
+                    0.3, // Initial confidence during learning
+                    config.getCapacity(),
+                    config.getRefillRate(),
+                    config.getCapacity(),
+                    config.getRefillRate(),
+                    reasoning
+                );
+            }
+            
             return new AdaptiveStatusInfo(
                 "STATIC",
                 0.0,
@@ -252,6 +307,20 @@ public class AdaptiveRateLimitEngine {
      * Get adapted limits for a key (if any)
      */
     public AdaptedLimits getAdaptedLimits(String key) {
+        // Check for manual override first
+        AdaptationOverride override = manualOverrides.get(key);
+        if (override != null) {
+            RateLimitConfig originalConfig = configurationResolver.resolveConfig(key);
+            return new AdaptedLimits(
+                originalConfig.getCapacity(),
+                originalConfig.getRefillRate(),
+                override.capacity,
+                override.refillRate,
+                Instant.now(),
+                Map.of("decision", "Manual override active"),
+                1.0
+            );
+        }
         return adaptedLimits.get(key);
     }
     

@@ -129,6 +129,28 @@ public class RateLimiterService {
         });
         
         holder.updateAccessTime();
+        
+        // Check if configuration has changed (e.g. adaptive limit applied)
+        RateLimitConfig currentConfig = configurationResolver.resolveConfig(key);
+        if (!currentConfig.equals(holder.config)) {
+            logger.info("Configuration changed for key: {}, updating bucket. Old: {}/{}, New: {}/{}", 
+                       key, holder.config.getCapacity(), holder.config.getRefillRate(),
+                       currentConfig.getCapacity(), currentConfig.getRefillRate());
+            
+            // Create new rate limiter with updated config
+            RateLimiter newRateLimiter = createRateLimiter(currentConfig);
+            
+            // If it's a token bucket, we can try to carry over some tokens
+            if (holder.rateLimiter instanceof TokenBucket && newRateLimiter instanceof TokenBucket) {
+                int currentTokens = ((TokenBucket) holder.rateLimiter).getCurrentTokens();
+                ((TokenBucket) newRateLimiter).setCurrentTokens(Math.min(currentTokens, currentConfig.getCapacity()));
+            }
+            
+            // Update the holder with new limiter and config
+            holder.rateLimiter = newRateLimiter;
+            holder.config = currentConfig;
+        }
+
         RateLimiter.ConsumptionResult result = holder.rateLimiter.tryConsumeWithResult(tokens);
         long processingTime = System.currentTimeMillis() - startTime;
         RateLimitAlgorithm algorithm = holder.config.getAlgorithm();
@@ -328,8 +350,8 @@ public class RateLimiterService {
      * Make BucketHolder accessible for admin operations.
      */
     public static class BucketHolder {
-        final RateLimiter rateLimiter;
-        final RateLimitConfig config;
+        RateLimiter rateLimiter;
+        RateLimitConfig config;
         volatile long lastAccessTime;
 
         public BucketHolder(RateLimiter rateLimiter, RateLimitConfig config) {

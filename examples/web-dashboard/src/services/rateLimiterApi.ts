@@ -43,6 +43,8 @@ interface ActiveKey {
   algorithm: string;
   lastAccessTime: number;
   active: boolean;
+  isActive?: boolean;
+  cleanupIntervalMs?: number;
 }
 
 interface ApiKeyInfo {
@@ -254,7 +256,9 @@ class RateLimiterApiService {
   // ============ ADMIN - ACTIVE KEYS ============
   
   async getActiveKeys(): Promise<AdminKeysResponse> {
-    return this.adminRequest<AdminKeysResponse>('/admin/keys');
+    const data = await this.adminRequest<AdminKeysResponse>('/admin/keys');
+    console.debug('Active keys from backend:', data);
+    return data;
   }
 
   // ============ AUTHENTICATION API KEYS ============
@@ -356,6 +360,10 @@ class RateLimiterApiService {
     return this.request<AdaptiveConfig>('/api/ratelimit/adaptive/config');
   }
 
+  async getAllAdaptiveStatuses(): Promise<AdaptiveStatus[]> {
+    return this.request<AdaptiveStatus[]>('/api/ratelimit/adaptive/all-statuses');
+  }
+
   async setAdaptiveOverride(key: string, override: AdaptiveOverrideRequest): Promise<void> {
     await this.request(`/api/ratelimit/adaptive/${encodeURIComponent(key)}/override`, {
       method: 'POST',
@@ -369,17 +377,12 @@ class RateLimiterApiService {
     });
   }
 
-  // Get adaptive status for all active keys
+  // Get adaptive status for all active keys (using bulk endpoint for reliability)
   async getAdaptiveStatusForAllKeys(): Promise<AdaptiveStatus[]> {
     try {
-      // First get active keys, then fetch adaptive status for each
-      const keysData = await this.getActiveKeys();
-      const statusPromises = keysData.keys.map(key => 
-        this.getAdaptiveStatus(key.key).catch(() => null)
-      );
-      const results = await Promise.all(statusPromises);
-      return results.filter((status): status is AdaptiveStatus => status !== null);
-    } catch {
+      return await this.getAllAdaptiveStatuses();
+    } catch (error) {
+      console.error('Failed to get adaptive status for all keys:', error);
       return [];
     }
   }

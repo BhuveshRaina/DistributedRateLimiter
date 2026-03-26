@@ -1,5 +1,6 @@
 package dev.bnacar.distributedratelimiter.ratelimit;
 
+import dev.bnacar.distributedratelimiter.adaptive.AdaptiveRateLimitEngine;
 import dev.bnacar.distributedratelimiter.schedule.ScheduleManagerService;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -10,13 +11,14 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Service responsible for resolving rate limit configuration for specific keys.
  * Supports exact key matches, pattern matching, and fallback to default configuration.
- * Also checks for active scheduled overrides.
+ * Also checks for active scheduled overrides and adaptive limits.
  */
 @Service
 public class ConfigurationResolver {
     
     private final RateLimiterConfiguration configuration;
     private ScheduleManagerService scheduleManager;
+    private AdaptiveRateLimitEngine adaptiveEngine;
     
     // Cache for resolved configurations to avoid repeated pattern matching
     private final ConcurrentHashMap<String, RateLimitConfig> configCache = new ConcurrentHashMap<>();
@@ -28,20 +30,60 @@ public class ConfigurationResolver {
     
     /**
      * Set the schedule manager for schedule-based configuration resolution.
-     * This is called after construction to avoid circular dependencies.
      */
     @Autowired(required = false)
     public void setScheduleManager(ScheduleManagerService scheduleManager) {
         this.scheduleManager = scheduleManager;
     }
+
+    /**
+     * Set the adaptive engine for adaptive-based configuration resolution.
+     */
+    @Autowired(required = false)
+    public void setAdaptiveEngine(AdaptiveRateLimitEngine adaptiveEngine) {
+        this.adaptiveEngine = adaptiveEngine;
+    }
     
+    /**
+     * Check if a key is explicitly registered in the configuration (exact or pattern).
+     */
+    public boolean isKeyRegistered(String key) {
+        // 1. Check exact key match
+        if (configuration.getKeys().containsKey(key)) {
+            return true;
+        }
+
+        // 1b. Check for original key if it's an IP-based key
+        // Format: ip:ADDRESS:ORIGINAL_KEY
+        if (key.startsWith("ip:")) {
+            int firstColon = key.indexOf(':');
+            int secondColon = key.indexOf(':', firstColon + 1);
+            if (secondColon != -1) {
+                String originalKey = key.substring(secondColon + 1);
+                if (configuration.getKeys().containsKey(originalKey)) {
+                    return true;
+                }
+            }
+        }
+        
+        // 2. Check pattern matches
+        for (String pattern : configuration.getPatterns().keySet()) {
+            if (matchesPattern(key, pattern)) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+
     /**
      * Resolve the appropriate rate limit configuration for the given key.
      * Order of precedence:
      * 1. Active scheduled overrides (highest priority)
-     * 2. Exact key match in per-key overrides
-     * 3. Pattern match in pattern configurations (first match wins)
-     * 4. Default configuration
+     * 2. Adaptive limits (if enabled and present)
+     * 3. Exact key match in per-key overrides
+     * 4. Pattern match in pattern configurations (first match wins)
+     * 5. Default configuration
      */
     public RateLimitConfig resolveConfig(String key) {
         // 1. Check for active scheduled overrides first
@@ -51,8 +93,24 @@ public class ConfigurationResolver {
                 return scheduledConfig;
             }
         }
+
+        // 2. Check for adaptive limits (includes manual overrides from adaptive engine)
+        if (adaptiveEngine != null) {
+            AdaptiveRateLimitEngine.AdaptedLimits adapted = adaptiveEngine.getAdaptedLimits(key);
+            if (adapted != null) {
+                // Create a config using adapted values
+                // Use default cleanup and algorithm from base config
+                RateLimitConfig baseConfig = getBaseConfig(key);
+                return new RateLimitConfig(
+                    adapted.adaptedCapacity,
+                    adapted.adaptedRefillRate,
+                    baseConfig.getCleanupIntervalMs(),
+                    baseConfig.getAlgorithm()
+                );
+            }
+        }
         
-        // 2. Check cache
+        // 3. Check cache
         RateLimitConfig cached = configCache.get(key);
         if (cached != null) {
             return cached;
@@ -63,6 +121,19 @@ public class ConfigurationResolver {
         // Cache the resolved configuration
         configCache.put(key, resolved);
         
+        return resolved;
+    }
+
+    /**
+     * Helper to get the non-adaptive base configuration for a key.
+     */
+    private RateLimitConfig getBaseConfig(String key) {
+        // Check cache for base config
+        RateLimitConfig cached = configCache.get(key);
+        if (cached != null) return cached;
+
+        RateLimitConfig resolved = doResolveConfig(key);
+        configCache.put(key, resolved);
         return resolved;
     }
     

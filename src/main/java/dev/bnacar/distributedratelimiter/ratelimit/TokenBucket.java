@@ -31,6 +31,11 @@ public class TokenBucket implements RateLimiter {
         return refillRate;
     }
 
+    public synchronized void setCurrentTokens(int tokens) {
+        this.currentTokens = Math.min(tokens, capacity);
+        this.lastRefillTime = System.currentTimeMillis();
+    }
+
     public synchronized ConsumptionResult tryConsumeWithResult(int tokens) {
         refill();
         if (tokens <= 0 || tokens > currentTokens) {
