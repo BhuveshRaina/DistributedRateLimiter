@@ -136,17 +136,6 @@ public class AdaptiveRateLimitController {
     }
 
     private String extractDisplayName(String key) {
-        return stripNumericSuffix(key);
-    }
-    
-    private String stripNumericSuffix(String key) {
-        int lastColon = key.lastIndexOf(':');
-        if (lastColon > 0) {
-            String suffix = key.substring(lastColon + 1);
-            if (suffix.matches("\\d+")) {
-                return key.substring(0, lastColon);
-            }
-        }
         return key;
     }
     

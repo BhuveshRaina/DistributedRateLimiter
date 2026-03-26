@@ -48,7 +48,7 @@ export const TestConfigPanel = ({ config, onChange }: TestConfigPanelProps) => {
 
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <Label>Request Rate (req/s)</Label>
+            <Label>Request Rate (req/s per thread)</Label>
             <span className="text-sm font-medium text-foreground">{config.requestRate}</span>
           </div>
           <Slider
@@ -56,9 +56,12 @@ export const TestConfigPanel = ({ config, onChange }: TestConfigPanelProps) => {
             onValueChange={([value]) => onChange({ ...config, requestRate: value })}
             min={1}
             max={1000}
-            step={10}
+            step={1}
             className="py-4"
           />
+          <p className="text-xs text-muted-foreground">
+            Number of requests each individual thread will send every second
+          </p>
         </div>
 
         <div className="space-y-2">
@@ -94,7 +97,7 @@ export const TestConfigPanel = ({ config, onChange }: TestConfigPanelProps) => {
             className="py-4"
           />
           <p className="text-xs text-muted-foreground">
-            Number of concurrent clients
+            Total load = {config.concurrency} threads × {config.requestRate} req/s = {config.concurrency * config.requestRate} total req/s
           </p>
         </div>
 

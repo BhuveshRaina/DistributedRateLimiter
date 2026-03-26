@@ -210,10 +210,12 @@ const LoadTesting = () => {
       // Call real backend API
       const response = await rateLimiterApi.runLoadTest({
         concurrentThreads: config.concurrency,
-        requestsPerThread: Math.ceil((config.requestRate * config.duration) / config.concurrency),
+        // Now treating requestRate as 'Per Thread'
+        requestsPerThread: Math.ceil(config.requestRate * config.duration),
         durationSeconds: config.duration,
         tokensPerRequest: config.tokensPerRequest,
-        delayBetweenRequestsMs: config.pattern === 'spike' ? 0 : Math.floor(1000 / (config.requestRate / config.concurrency)),
+        // Delay is now calculated directly from the per-thread rate
+        delayBetweenRequestsMs: config.pattern === 'spike' ? 0 : Math.floor(1000 / config.requestRate),
         keyPrefix: config.targetKey,
         algorithmOverride: config.algorithmOverride,
         timeoutMs: config.timeout,

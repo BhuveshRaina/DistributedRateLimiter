@@ -130,81 +130,30 @@ public class ConfigurationResolver {
     
     /**
      * Resolve the canonical base key for a given input key.
-     * This handles stripping thread suffixes to find the shared bucket key
-     * while preserving numeric user IDs that are part of the intended key.
+     * In this system, we use exact matches, so the base key is the key itself.
+     * This ensures that multi-threaded requests using the same key string
+     * will share the same bucket.
      */
     public String resolveBaseKey(String key) {
-        // 1. If the key as-is is an explicit configuration key, use it
-        if (configuration.getKeys().containsKey(key)) {
-            return key;
-        }
-
-        // 2. Only strip numeric suffix if the prefix is a registered key
-        // This allows user:123:1 (where 1 is a thread) to map to user:123
-        // while allowing user:123 to remain user:123 if it's the registered key
-        int lastColon = key.lastIndexOf(':');
-        if (lastColon > 0) {
-            String suffix = key.substring(lastColon + 1);
-            if (suffix.matches("\\d+")) {
-                String prefix = key.substring(0, lastColon);
-                if (configuration.getKeys().containsKey(prefix)) {
-                    return prefix;
-                }
-            }
-        }
-
-        // 3. For pattern matches or unknown keys, we keep the key as-is
-        // to ensure per-ID bucketing (e.g. user:123 and user:456 get separate buckets)
-        return key;
-    }
-
-    private String stripNumericSuffix(String key) {
-        // This method is now effectively integrated into resolveBaseKey for better context
-        int lastColon = key.lastIndexOf(':');
-        if (lastColon > 0) {
-            String suffix = key.substring(lastColon + 1);
-            if (suffix.matches("\\d+")) {
-                return key.substring(0, lastColon);
-            }
-        }
         return key;
     }
 
     private RateLimitConfig doResolveConfig(String key) {
-        String canonicalKey = resolveBaseKey(key);
-        
-        // 1. Try to resolve the key as-is (using canonical version)
-        RateLimitConfig config = resolveFromExactOrSuffix(canonicalKey);
-        if (config != null) return config;
+        // 1. Try to resolve the key as an exact match
+        RateLimiterConfiguration.KeyConfig exact = configuration.getKeys().get(key);
+        if (exact != null) {
+            return createConfig(exact);
+        }
 
-        // 2. Check pattern matches (original key)
+        // 2. Check pattern matches
         for (Map.Entry<String, RateLimiterConfiguration.KeyConfig> entry : configuration.getPatterns().entrySet()) {
-            if (matchesPattern(canonicalKey, entry.getKey())) {
+            if (matchesPattern(key, entry.getKey())) {
                 return createConfig(entry.getValue());
             }
         }
 
         // 3. Return default configuration
         return configuration.getDefaultConfig();
-    }
-
-    /**
-     * Helper to resolve a key by checking exact match or prefix (for suffixes like :1, :2).
-     */
-    private RateLimitConfig resolveFromExactOrSuffix(String key) {
-        // Exact match
-        RateLimiterConfiguration.KeyConfig exact = configuration.getKeys().get(key);
-        if (exact != null) return createConfig(exact);
-
-        // Suffix match (strip the last colon part)
-        int lastColon = key.lastIndexOf(':');
-        if (lastColon > 0) {
-            String prefix = key.substring(0, lastColon);
-            RateLimiterConfiguration.KeyConfig prefixConfig = configuration.getKeys().get(prefix);
-            if (prefixConfig != null) return createConfig(prefixConfig);
-        }
-        
-        return null;
     }
     
     /**

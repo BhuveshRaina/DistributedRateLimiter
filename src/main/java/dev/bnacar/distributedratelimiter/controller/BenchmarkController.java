@@ -186,8 +186,8 @@ public class BenchmarkController {
                                 AtomicLong totalRequests,
                                 java.util.concurrent.ConcurrentLinkedQueue<Long> responseTimes) {
         long requestsPerThread = request.getRequestsPerThread();
-        String keyPrefix = request.getKeyPrefix() != null ? request.getKeyPrefix() : "benchmark";
-        String key = keyPrefix + ":" + threadId;
+        // Use the exact keyPrefix provided without appending threadId to support shared bucket testing
+        String key = request.getKeyPrefix() != null ? request.getKeyPrefix() : "benchmark";
         int tokensPerRequest = request.getTokensPerRequest();
         
         long startNano = System.nanoTime();

@@ -108,7 +108,7 @@ public class RateLimiterService {
 
         long startTime = System.currentTimeMillis();
         
-        // Resolve canonical key (strips thread suffixes)
+        // Resolve canonical key (the key string as-is)
         String sharedKey = configurationResolver.resolveBaseKey(key);
         
         BucketHolder holder = buckets.computeIfAbsent(sharedKey, k -> {
