@@ -130,14 +130,36 @@ public class ConfigurationResolver {
     
     /**
      * Resolve the canonical base key for a given input key.
-     * This handles stripping IP prefixes and thread suffixes to find the shared bucket key.
+     * This handles stripping thread suffixes to find the shared bucket key
+     * while preserving numeric user IDs that are part of the intended key.
      */
     public String resolveBaseKey(String key) {
-        // Just strip numeric suffix as IP prefixes are no longer added
-        return stripNumericSuffix(key);
+        // 1. If the key as-is is an explicit configuration key, use it
+        if (configuration.getKeys().containsKey(key)) {
+            return key;
+        }
+
+        // 2. Only strip numeric suffix if the prefix is a registered key
+        // This allows user:123:1 (where 1 is a thread) to map to user:123
+        // while allowing user:123 to remain user:123 if it's the registered key
+        int lastColon = key.lastIndexOf(':');
+        if (lastColon > 0) {
+            String suffix = key.substring(lastColon + 1);
+            if (suffix.matches("\\d+")) {
+                String prefix = key.substring(0, lastColon);
+                if (configuration.getKeys().containsKey(prefix)) {
+                    return prefix;
+                }
+            }
+        }
+
+        // 3. For pattern matches or unknown keys, we keep the key as-is
+        // to ensure per-ID bucketing (e.g. user:123 and user:456 get separate buckets)
+        return key;
     }
 
     private String stripNumericSuffix(String key) {
+        // This method is now effectively integrated into resolveBaseKey for better context
         int lastColon = key.lastIndexOf(':');
         if (lastColon > 0) {
             String suffix = key.substring(lastColon + 1);

@@ -61,6 +61,8 @@ public class RateLimiterConfiguration {
             this.algorithm = RateLimitAlgorithm.valueOf((String) defaultConfig.get("algorithm"));
         }
         
+        // Ensure that these are not re-initialized as new HashMaps, but merged with existing properties
+        // This is crucial if some configs come from application.properties and others from Redis
         Map<String, KeyConfig> loadedKeys = configRepository.loadKeyConfigs();
         if (!loadedKeys.isEmpty()) {
             this.keys.putAll(loadedKeys);
