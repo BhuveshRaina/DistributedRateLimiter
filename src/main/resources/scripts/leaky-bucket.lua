@@ -74,9 +74,15 @@ if tokens_to_process > 0 then
         queue_size = queue_size - processed_count
     end
     
-    -- Update last_leak_time by the time actually used for processing tokens
-    local time_consumed = math.floor(tokens_to_process * 1000 / leak_rate)
-    last_leak_time = last_leak_time + time_consumed
+    -- Update last_leak_time. 
+    -- If bucket is now empty, reset to current_time to prevent "accumulating" leak potential
+    if queue_size == 0 then
+        last_leak_time = current_time
+    else
+        -- Otherwise, update by the exact time used for processing tokens
+        local time_consumed = math.floor(tokens_to_process * 1000 / leak_rate)
+        last_leak_time = last_leak_time + time_consumed
+    end
 end
 
 -- Handle new request

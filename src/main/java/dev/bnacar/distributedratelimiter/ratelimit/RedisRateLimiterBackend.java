@@ -31,12 +31,13 @@ public class RedisRateLimiterBackend implements RateLimiterBackend {
             case TOKEN_BUCKET:
                 return new RedisTokenBucket(redisKey, config.getCapacity(), config.getRefillRate(), redisTemplate);
             case SLIDING_WINDOW:
-                // For now, fallback to TokenBucket for SlidingWindow in Redis (could be implemented later)
-                return new RedisTokenBucket(redisKey, config.getCapacity(), config.getRefillRate(), redisTemplate);
+                return new RedisSlidingWindow(redisKey, config.getCapacity(), config.getRefillRate(), redisTemplate);
             case FIXED_WINDOW:
                 return new RedisFixedWindow(redisKey, config.getCapacity(), config.getRefillRate(), redisTemplate);
             case LEAKY_BUCKET:
-                return new RedisLeakyBucket(redisKey, config.getCapacity(), config.getRefillRate(), redisTemplate);
+                // Use cleanupIntervalMs from config as the maxQueueTimeMs for LeakyBucket
+                return new RedisLeakyBucket(redisKey, config.getCapacity(), config.getRefillRate(), 
+                                           config.getCleanupIntervalMs(), redisTemplate);
             default:
                 throw new IllegalArgumentException("Unknown algorithm: " + config.getAlgorithm());
         }

@@ -22,7 +22,7 @@ public class RedisFixedWindow implements RateLimiter {
     private final RedisScript<List> fixedWindowScript;
     
     public RedisFixedWindow(String key, int capacity, int refillRate, RedisTemplate<String, Object> redisTemplate) {
-        this(key, capacity, refillRate, 60000, redisTemplate); // Default 1-minute window
+        this(key, capacity, refillRate, 1000, redisTemplate); // Default 1-second window
     }
     
     public RedisFixedWindow(String key, int capacity, int refillRate, long windowDurationMs, RedisTemplate<String, Object> redisTemplate) {
@@ -47,10 +47,13 @@ public class RedisFixedWindow implements RateLimiter {
         
         try {
             long currentTime = System.currentTimeMillis();
+            // In Fixed Window, refillRate represents the limit per window
+            int limit = Math.max(capacity, refillRate);
+            
             List<Object> result = redisTemplate.execute(
                 fixedWindowScript,
                 Collections.singletonList(key),
-                capacity, windowDurationMs, tokens, currentTime
+                limit, windowDurationMs, tokens, currentTime
             );
             
             if (result != null && !result.isEmpty()) {
@@ -70,10 +73,11 @@ public class RedisFixedWindow implements RateLimiter {
     public int getCurrentTokens() {
         try {
             long currentTime = System.currentTimeMillis();
+            int limit = Math.max(capacity, refillRate);
             List<Object> result = redisTemplate.execute(
                 fixedWindowScript,
                 Collections.singletonList(key),
-                capacity, windowDurationMs, 0, currentTime // 0 tokens = query only
+                limit, windowDurationMs, 0, currentTime // 0 tokens = query only
             );
             
             if (result != null && result.size() >= 2) {
@@ -82,9 +86,9 @@ public class RedisFixedWindow implements RateLimiter {
                 return remainingTokens != null ? remainingTokens.intValue() : 0;
             }
             
-            return capacity; // Default to full capacity if query fails
+            return limit; // Default to full limit if query fails
         } catch (Exception e) {
-            return capacity; // Default to full capacity on error
+            return Math.max(capacity, refillRate); // Default to full limit on error
         }
     }
     
@@ -102,10 +106,11 @@ public class RedisFixedWindow implements RateLimiter {
     public long getLastRefillTime() {
         try {
             long currentTime = System.currentTimeMillis();
+            int limit = Math.max(capacity, refillRate);
             List<Object> result = redisTemplate.execute(
                 fixedWindowScript,
                 Collections.singletonList(key),
-                capacity, windowDurationMs, 0, currentTime // 0 tokens = query only
+                limit, windowDurationMs, 0, currentTime // 0 tokens = query only
             );
             
             if (result != null && result.size() >= 4) {
@@ -133,10 +138,11 @@ public class RedisFixedWindow implements RateLimiter {
     public int getCurrentUsage() {
         try {
             long currentTime = System.currentTimeMillis();
+            int limit = Math.max(capacity, refillRate);
             List<Object> result = redisTemplate.execute(
                 fixedWindowScript,
                 Collections.singletonList(key),
-                capacity, windowDurationMs, 0, currentTime // 0 tokens = query only
+                limit, windowDurationMs, 0, currentTime // 0 tokens = query only
             );
             
             if (result != null && result.size() >= 3) {

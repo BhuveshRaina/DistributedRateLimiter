@@ -37,12 +37,19 @@ public class FixedWindow implements RateLimiter {
         
         // Check if we need to reset the window
         if (currentTime - windowStartTime >= windowDurationMs) {
-            resetWindow(currentTime);
+            // Support multiple window skips
+            long windowsPassed = (currentTime - windowStartTime) / windowDurationMs;
+            windowStartTime += windowsPassed * windowDurationMs;
+            currentCount.set(0);
         }
         
-        // Check if adding tokens would exceed capacity
+        // In Fixed Window, the 'refillRate' is the actual limit per window
+        // Use the larger of capacity or refillRate to determine the limit
+        int limit = Math.max(capacity, refillRate);
+        
+        // Check if adding tokens would exceed limit
         int current = currentCount.get();
-        if (current + tokens > capacity) {
+        if (current + tokens > limit) {
             return false;
         }
         

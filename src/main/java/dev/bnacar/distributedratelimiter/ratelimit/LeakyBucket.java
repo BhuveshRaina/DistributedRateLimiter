@@ -84,17 +84,25 @@ public class LeakyBucket implements RateLimiter {
         long elapsedMs = currentTime - lastLeakTime.get();
         
         // Calculate how many tokens have "leaked" (processed) since last time
-        double leaked = (elapsedMs / 1000.0) * leakRatePerSecond;
-        if (leaked >= 1.0) {
-            int tokensToClear = (int) leaked;
-            // Reduce simulated queue size
-            int currentSize = currentSimulatedQueueSize.get();
-            int newSize = Math.max(0, currentSize - tokensToClear);
-            currentSimulatedQueueSize.set(newSize);
-            lastLeakTime.addAndGet((long) (tokensToClear * 1000.0 / leakRatePerSecond));
+        // Leaky bucket strictly processes tokens over time
+        if (elapsedMs > 0) {
+            double leaked = (elapsedMs / 1000.0) * leakRatePerSecond;
+            if (leaked >= 1.0) {
+                int tokensToClear = (int) leaked;
+                // Reduce simulated queue size
+                int currentSize = currentSimulatedQueueSize.get();
+                int newSize = Math.max(0, currentSize - tokensToClear);
+                currentSimulatedQueueSize.set(newSize);
+                
+                // Update lastLeakTime by the exact duration used to leak whole tokens
+                long timeConsumedMs = (long) (tokensToClear * 1000.0 / leakRatePerSecond);
+                lastLeakTime.addAndGet(timeConsumedMs);
+            }
         }
 
-        // Check if we have room in the "bucket" (queue)
+        // For Leaky Bucket, if capacity is 1, it must process before next request
+        // If capacity is 5, it acts like a queue of 5.
+        // If tokens requested exceeds current capacity, it fails immediately (no burst beyond queue)
         if (currentSimulatedQueueSize.get() + tokens > queueCapacity) {
             return false;
         }
