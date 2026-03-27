@@ -1,21 +1,15 @@
 package dev.bnacar.distributedratelimiter.ratelimit;
 
-import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.context.annotation.Configuration;
-
-import java.util.Map;
-import java.util.HashMap;
-
 import dev.bnacar.distributedratelimiter.config.ConfigRepository;
 import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import java.util.Map;
 import java.util.HashMap;
+import java.util.Map;
 
 @Configuration
 @ConfigurationProperties(prefix = "ratelimiter")
@@ -37,6 +31,8 @@ public class RateLimiterConfiguration {
     @Autowired(required = false)
     private ConfigRepository configRepository;
 
+    private boolean initialized = false;
+
     /**
      * Load state from Redis after initialization.
      */
@@ -50,33 +46,50 @@ public class RateLimiterConfiguration {
                 logger.warn("Failed to load configuration from Redis, using defaults: {}", e.getMessage());
             }
         }
+        this.initialized = true;
     }
 
     private void loadFromRedis() {
-        Map<Object, Object> defaultConfig = configRepository.loadDefaultConfig();
-        if (!defaultConfig.isEmpty()) {
-            this.capacity = (Integer) defaultConfig.get("capacity");
-            this.refillRate = (Integer) defaultConfig.get("refillRate");
-            this.cleanupIntervalMs = ((Number) defaultConfig.get("cleanupIntervalMs")).longValue();
-            this.algorithm = RateLimitAlgorithm.valueOf((String) defaultConfig.get("algorithm"));
-        }
-        
-        // Ensure that these are not re-initialized as new HashMaps, but merged with existing properties
-        // This is crucial if some configs come from application.properties and others from Redis
-        Map<String, KeyConfig> loadedKeys = configRepository.loadKeyConfigs();
-        if (!loadedKeys.isEmpty()) {
-            this.keys.putAll(loadedKeys);
-        }
+        try {
+            Map<Object, Object> defaultConfig = configRepository.loadDefaultConfig();
+            if (defaultConfig != null && !defaultConfig.isEmpty()) {
+                if (defaultConfig.get("capacity") != null) {
+                    this.capacity = (Integer) defaultConfig.get("capacity");
+                }
+                if (defaultConfig.get("refillRate") != null) {
+                    this.refillRate = (Integer) defaultConfig.get("refillRate");
+                }
+                if (defaultConfig.get("cleanupIntervalMs") != null) {
+                    this.cleanupIntervalMs = ((Number) defaultConfig.get("cleanupIntervalMs")).longValue();
+                }
+                if (defaultConfig.get("algorithm") != null) {
+                    this.algorithm = RateLimitAlgorithm.valueOf((String) defaultConfig.get("algorithm"));
+                }
+            }
+            
+            // Ensure that these are not re-initialized as new HashMaps, but merged with existing properties
+            // This is crucial if some configs come from application.properties and others from Redis
+            Map<String, KeyConfig> loadedKeys = configRepository.loadKeyConfigs();
+            if (loadedKeys != null && !loadedKeys.isEmpty()) {
+                this.keys.putAll(loadedKeys);
+            }
 
-        Map<String, KeyConfig> loadedPatterns = configRepository.loadPatternConfigs();
-        if (!loadedPatterns.isEmpty()) {
-            this.patterns.putAll(loadedPatterns);
+            Map<String, KeyConfig> loadedPatterns = configRepository.loadPatternConfigs();
+            if (loadedPatterns != null && !loadedPatterns.isEmpty()) {
+                this.patterns.putAll(loadedPatterns);
+            }
+        } catch (Exception e) {
+            logger.warn("Error while loading configuration from Redis: {}", e.getMessage());
         }
     }
 
     private void saveDefaultToRedis() {
-        if (configRepository != null) {
-            configRepository.saveDefaultConfig(capacity, refillRate, cleanupIntervalMs, algorithm);
+        if (configRepository != null && initialized) {
+            try {
+                configRepository.saveDefaultConfig(capacity, refillRate, cleanupIntervalMs, algorithm);
+            } catch (Exception e) {
+                logger.warn("Failed to save default configuration to Redis: {}", e.getMessage());
+            }
         }
     }
     
@@ -176,30 +189,46 @@ public class RateLimiterConfiguration {
     // Methods for safe modification of keys and patterns
     public void putKey(String key, KeyConfig config) {
         this.keys.put(key, config);
-        if (configRepository != null) {
-            configRepository.saveKeyConfig(key, config);
+        if (configRepository != null && initialized) {
+            try {
+                configRepository.saveKeyConfig(key, config);
+            } catch (Exception e) {
+                logger.warn("Failed to save key config to Redis for {}: {}", key, e.getMessage());
+            }
         }
     }
     
     public KeyConfig removeKey(String key) {
         KeyConfig removed = this.keys.remove(key);
-        if (configRepository != null && removed != null) {
-            configRepository.deleteKeyConfig(key);
+        if (configRepository != null && initialized && removed != null) {
+            try {
+                configRepository.deleteKeyConfig(key);
+            } catch (Exception e) {
+                logger.warn("Failed to delete key config from Redis for {}: {}", key, e.getMessage());
+            }
         }
         return removed;
     }
     
     public void putPattern(String pattern, KeyConfig config) {
         this.patterns.put(pattern, config);
-        if (configRepository != null) {
-            configRepository.savePatternConfig(pattern, config);
+        if (configRepository != null && initialized) {
+            try {
+                configRepository.savePatternConfig(pattern, config);
+            } catch (Exception e) {
+                logger.warn("Failed to save pattern config to Redis for {}: {}", pattern, e.getMessage());
+            }
         }
     }
     
     public KeyConfig removePattern(String pattern) {
         KeyConfig removed = this.patterns.remove(pattern);
-        if (configRepository != null && removed != null) {
-            configRepository.deletePatternConfig(pattern);
+        if (configRepository != null && initialized && removed != null) {
+            try {
+                configRepository.deletePatternConfig(pattern);
+            } catch (Exception e) {
+                logger.warn("Failed to delete pattern config from Redis for {}: {}", pattern, e.getMessage());
+            }
         }
         return removed;
     }
