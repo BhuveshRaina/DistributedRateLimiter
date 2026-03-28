@@ -54,7 +54,13 @@ public class RedisTokenBucket implements RateLimiter {
                 
                 boolean allowed = false;
                 if (successValue instanceof Number) {
-                    allowed = ((Number) successValue).intValue() == 1;
+                    int successInt = ((Number) successValue).intValue();
+                    if (successInt == -1) {
+                        org.slf4j.LoggerFactory.getLogger(RedisTokenBucket.class)
+                            .error("Lua script validation failed for key {}: capacity={}, refillRate={}, tokens={}", 
+                                   key, capacity, refillRate, tokens);
+                    }
+                    allowed = successInt == 1;
                 }
                 
                 int remaining = capacity;
@@ -62,14 +68,14 @@ public class RedisTokenBucket implements RateLimiter {
                     remaining = ((Number) tokensValue).intValue();
                 }
                 
-                return new ConsumptionResult(allowed, remaining);
+                return new ConsumptionResult(allowed, remaining, capacity);
             }
             
-            return new ConsumptionResult(false, capacity);
+            return new ConsumptionResult(false, capacity, capacity);
         } catch (Exception e) {
             org.slf4j.LoggerFactory.getLogger(RedisTokenBucket.class)
                 .error("Redis operation failed for key {}: {}", key, e.getMessage());
-            return new ConsumptionResult(false, capacity);
+            return new ConsumptionResult(false, capacity, capacity);
         }
     }
     
@@ -99,6 +105,17 @@ public class RedisTokenBucket implements RateLimiter {
             return capacity; // Default to full bucket if we can't read state
         } catch (Exception e) {
             throw new RuntimeException("Redis operation failed", e);
+        }
+    }
+
+    @Override
+    public void setCurrentTokens(int tokens) {
+        try {
+            redisTemplate.opsForHash().put(key, "tokens", tokens);
+            redisTemplate.opsForHash().put(key, "last_refill", System.currentTimeMillis());
+        } catch (Exception e) {
+            org.slf4j.LoggerFactory.getLogger(RedisTokenBucket.class)
+                .error("Failed to manually set tokens for key {}: {}", key, e.getMessage());
         }
     }
     

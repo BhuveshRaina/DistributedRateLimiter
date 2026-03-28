@@ -17,15 +17,23 @@ import {
 
 const LoadTesting = () => {
   const { realtimeMetrics } = useApp();
-  const [config, setConfig] = useState<LoadTestConfig>({
-    targetKey: "rl_prod_user123",
-    requestRate: 100,
-    duration: 30,
-    concurrency: 10,
-    pattern: "constant",
-    tokensPerRequest: 1,
-    timeout: 5000,
+  const [config, setConfig] = useState<LoadTestConfig>(() => {
+    const saved = localStorage.getItem('drl-loadtest-config');
+    return saved ? JSON.parse(saved) : {
+      targetKey: "rl_prod_user123",
+      requestRate: 100,
+      duration: 30,
+      concurrency: 10,
+      pattern: "constant",
+      tokensPerRequest: 1,
+      timeout: 5000,
+    };
   });
+
+  // Persist config changes to localStorage
+  useEffect(() => {
+    localStorage.setItem('drl-loadtest-config', JSON.stringify(config));
+  }, [config]);
 
   const [isRunning, setIsRunning] = useState(false);
   const [progress, setProgress] = useState(0);

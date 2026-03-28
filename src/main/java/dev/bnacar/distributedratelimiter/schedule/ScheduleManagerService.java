@@ -49,21 +49,26 @@ public class ScheduleManagerService {
     @Scheduled(fixedRate = 60000)
     public void evaluateSchedules() {
         Instant now = Instant.now();
-        logger.debug("Evaluating schedules at {}", now);
+        logger.info("Evaluating schedules at {}", now);
         
         List<RateLimitSchedule> activeSchedules = findActiveSchedules(now);
+        logger.info("Found {} active schedules", activeSchedules.size());
         
         // Update active schedule configurations
         activeScheduleConfigs.clear();
-        for (RateLimitSchedule schedule : activeSchedules) {
+        
+        // Process in reverse priority order (lowest first) so higher priority ones overwrite
+        List<RateLimitSchedule> sortedSchedules = new ArrayList<>(activeSchedules);
+        sortedSchedules.sort(Comparator.comparingInt(RateLimitSchedule::getPriority));
+        
+        for (RateLimitSchedule schedule : sortedSchedules) {
             if (schedule.getActiveLimits() != null) {
                 activeScheduleConfigs.put(schedule.getKeyPattern(), schedule.getActiveLimits());
-                logger.debug("Applied active schedule '{}' for pattern '{}'", 
-                    schedule.getName(), schedule.getKeyPattern());
+                logger.info("APPLIED active schedule '{}' for pattern '{}' (Priority: {}, Capacity: {})", 
+                    schedule.getName(), schedule.getKeyPattern(), schedule.getPriority(), 
+                    schedule.getActiveLimits().getCapacity());
             }
         }
-        
-        logger.debug("Active schedules: {}", activeSchedules.size());
     }
     
     /**
@@ -81,10 +86,14 @@ public class ScheduleManagerService {
         
         for (RateLimitSchedule schedule : schedules.values()) {
             if (!schedule.isEnabled()) {
+                logger.debug("Schedule '{}' is disabled, skipping", schedule.getName());
                 continue;
             }
             
-            if (isScheduleActive(schedule, time)) {
+            boolean isActive = isScheduleActive(schedule, time);
+            logger.debug("Checking schedule '{}': type={}, active={}", schedule.getName(), schedule.getType(), isActive);
+            
+            if (isActive) {
                 active.add(schedule);
             }
         }
@@ -175,20 +184,32 @@ public class ScheduleManagerService {
      * Returns null if no schedule is active for the key.
      */
     public RateLimitConfig getActiveConfig(String key) {
+        logger.info("Looking for active schedule for key: '{}'. Total active configs: {}", key, activeScheduleConfigs.size());
+        
+        // Log all patterns currently in memory
+        activeScheduleConfigs.forEach((pattern, config) -> 
+            logger.info("Current active pattern: '{}' with capacity: {}", pattern, config.getCapacity()));
+
         // Check exact matches first
         RateLimitConfig exactMatch = activeScheduleConfigs.get(key);
         if (exactMatch != null) {
+            logger.info("Found EXACT schedule match for key '{}': capacity={}", key, exactMatch.getCapacity());
             return exactMatch;
         }
         
         // Check pattern matches
         for (Map.Entry<String, RateLimitConfig> entry : activeScheduleConfigs.entrySet()) {
             String pattern = entry.getKey();
-            if (matchesPattern(key, pattern)) {
+            boolean isMatch = matchesPattern(key, pattern);
+            logger.info("Comparing key '{}' against pattern '{}' -> Match: {}", key, pattern, isMatch);
+            if (isMatch) {
+                logger.info("Found PATTERN schedule match for key '{}' (pattern '{}'): capacity={}", 
+                    key, pattern, entry.getValue().getCapacity());
                 return entry.getValue();
             }
         }
         
+        logger.info("No active schedule matched key: '{}'", key);
         return null;
     }
     
@@ -234,6 +255,9 @@ public class ScheduleManagerService {
         validateSchedule(schedule);
         schedules.put(schedule.getName(), schedule);
         logger.info("Created schedule: {}", schedule.getName());
+        
+        // Trigger immediate evaluation so it's active instantly
+        evaluateSchedules();
     }
     
     /**
@@ -248,6 +272,9 @@ public class ScheduleManagerService {
         validateSchedule(schedule);
         schedules.put(name, schedule);
         logger.info("Updated schedule: {}", name);
+        
+        // Trigger immediate evaluation
+        evaluateSchedules();
     }
     
     /**

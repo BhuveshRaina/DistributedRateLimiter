@@ -46,6 +46,37 @@ public class RedisLeakyBucket implements RateLimiter {
     }
     
     @Override
+    public ConsumptionResult tryConsumeWithResult(int tokens) {
+        if (tokens <= 0) {
+            return new ConsumptionResult(false, getCurrentTokens(), queueCapacity);
+        }
+        
+        try {
+            long currentTime = System.currentTimeMillis();
+            List<Object> result = redisTemplate.execute(
+                leakyBucketScript,
+                Collections.singletonList(key),
+                queueCapacity, leakRatePerSecond, tokens, currentTime, maxQueueTimeMs
+            );
+            
+            if (result != null && result.size() >= 2) {
+                // Result format: {success, queue_size, capacity, leak_rate, last_leak_time, estimated_wait_ms}
+                Number successValue = (Number) result.get(0);
+                Number queueSizeValue = (Number) result.get(1);
+                
+                boolean allowed = successValue != null && successValue.intValue() == 1;
+                int remaining = Math.max(0, queueCapacity - (queueSizeValue != null ? queueSizeValue.intValue() : 0));
+                
+                return new ConsumptionResult(allowed, remaining, queueCapacity);
+            }
+            
+            return new ConsumptionResult(false, 0, queueCapacity);
+        } catch (Exception e) {
+            return new ConsumptionResult(false, 0, queueCapacity);
+        }
+    }
+
+    @Override
     public boolean tryConsume(int tokens) {
         if (tokens <= 0) {
             return false;
@@ -99,6 +130,11 @@ public class RedisLeakyBucket implements RateLimiter {
         } catch (Exception e) {
             throw new RuntimeException("Redis leaky bucket state query failed for key: " + key, e);
         }
+    }
+
+    @Override
+    public void setCurrentTokens(int tokens) {
+        // No-op
     }
     
     @Override

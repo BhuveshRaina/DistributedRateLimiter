@@ -1,71 +1,78 @@
 package dev.bnacar.distributedratelimiter.ratelimit;
 
+/**
+ * Standard in-memory Token Bucket implementation.
+ */
 public class TokenBucket implements RateLimiter {
-
+    
     private final int capacity;
     private final int refillRate;
+    private double currentTokens;
     private long lastRefillTime;
-    private int currentTokens;
-
-
+    
     public TokenBucket(int capacity, int refillRate) {
-        this.currentTokens = capacity;
         this.capacity = capacity;
-        this.lastRefillTime = System.currentTimeMillis();
         this.refillRate = refillRate;
-    }
-
-    public int getCurrentTokens() {
-        return currentTokens;
-    }
-
-    public int getCapacity() {
-        return capacity;
-    }
-
-    public long getLastRefillTime() {
-        return lastRefillTime;
-    }
-
-    public int getRefillRate() {
-        return refillRate;
-    }
-
-    public synchronized void setCurrentTokens(int tokens) {
-        this.currentTokens = Math.min(tokens, capacity);
+        this.currentTokens = capacity;
         this.lastRefillTime = System.currentTimeMillis();
     }
-
-    public synchronized ConsumptionResult tryConsumeWithResult(int tokens) {
-        refill();
-        if (tokens <= 0 || tokens > currentTokens) {
-            return new ConsumptionResult(false, currentTokens);
-        }
-
-        currentTokens -= tokens;
-        return new ConsumptionResult(true, currentTokens);
-    }
-
+    
+    @Override
     public synchronized boolean tryConsume(int tokens) {
         return tryConsumeWithResult(tokens).allowed;
     }
-
-    private synchronized void refill() {
-        long currentTime = System.currentTimeMillis();
-        long elapsedMs = currentTime - lastRefillTime;
-
-        if (elapsedMs > 0) {
-            // How many tokens were generated in the elapsed time
-            double tokensGenerated = (elapsedMs / 1000.0) * refillRate;
-            
-            if (tokensGenerated >= 1.0) {
-                int tokensToAdd = (int) tokensGenerated;
-                currentTokens = Math.min(capacity, currentTokens + tokensToAdd);
-                
-                // Update lastRefillTime by the exact duration used to generate the whole tokens added
-                long timeConsumedMs = (long) (tokensToAdd * 1000.0 / refillRate);
-                lastRefillTime += timeConsumedMs;
-            }
+    
+    @Override
+    public synchronized ConsumptionResult tryConsumeWithResult(int tokens) {
+        refill();
+        
+        if (tokens <= 0) {
+            return new ConsumptionResult(false, (int) currentTokens, capacity);
         }
+        
+        if (currentTokens >= tokens) {
+            currentTokens -= tokens;
+            return new ConsumptionResult(true, (int) currentTokens, capacity);
+        }
+        
+        return new ConsumptionResult(false, (int) currentTokens, capacity);
+    }
+    
+    private void refill() {
+        long now = System.currentTimeMillis();
+        double timeElapsed = (now - lastRefillTime) / 1000.0;
+        double tokensToAdd = timeElapsed * refillRate;
+        
+        if (tokensToAdd > 0) {
+            currentTokens = Math.min(capacity, currentTokens + tokensToAdd);
+            lastRefillTime = now;
+        }
+    }
+    
+    @Override
+    public synchronized int getCurrentTokens() {
+        refill();
+        return (int) currentTokens;
+    }
+
+    @Override
+    public synchronized void setCurrentTokens(int tokens) {
+        this.currentTokens = Math.min(capacity, Math.max(0, tokens));
+        this.lastRefillTime = System.currentTimeMillis();
+    }
+    
+    @Override
+    public int getCapacity() {
+        return capacity;
+    }
+    
+    @Override
+    public int getRefillRate() {
+        return refillRate;
+    }
+    
+    @Override
+    public long getLastRefillTime() {
+        return lastRefillTime;
     }
 }

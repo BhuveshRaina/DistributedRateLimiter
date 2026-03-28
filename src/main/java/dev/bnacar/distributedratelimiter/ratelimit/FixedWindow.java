@@ -1,75 +1,72 @@
 package dev.bnacar.distributedratelimiter.ratelimit;
 
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Fixed window rate limiter implementation.
- * Uses fixed time windows with counter reset at window boundaries.
- * Provides memory-efficient rate limiting with predictable reset times.
+ * Standard in-memory Fixed Window rate limiting implementation.
  */
 public class FixedWindow implements RateLimiter {
     
     private final int capacity;
-    private final int refillRate; // For compatibility - represents requests per window
-    private final long windowDurationMs;
-    private final AtomicInteger currentCount;
-    private volatile long windowStartTime;
+    private final int refillRate;
+    private final int windowDurationMs;
+    private final AtomicInteger currentCount = new AtomicInteger(0);
+    private final AtomicLong windowStart = new AtomicLong(System.currentTimeMillis());
     
     public FixedWindow(int capacity, int refillRate) {
-        this(capacity, refillRate, 1000); // 1-second window to match req/sec refill logic
+        this(capacity, refillRate, 1000); // Default 1-second window
     }
-    
-    public FixedWindow(int capacity, int refillRate, long windowDurationMs) {
+
+    public FixedWindow(int capacity, int refillRate, int windowDurationMs) {
         this.capacity = capacity;
         this.refillRate = refillRate;
         this.windowDurationMs = windowDurationMs;
-        this.currentCount = new AtomicInteger(0);
-        this.windowStartTime = System.currentTimeMillis();
     }
     
     @Override
-    public synchronized boolean tryConsume(int tokens) {
+    public boolean tryConsume(int tokens) {
+        return tryConsumeWithResult(tokens).allowed;
+    }
+    
+    @Override
+    public ConsumptionResult tryConsumeWithResult(int tokens) {
+        resetIfNecessary();
+        
         if (tokens <= 0) {
-            return false;
+            return new ConsumptionResult(false, capacity - currentCount.get(), capacity);
         }
         
-        long currentTime = System.currentTimeMillis();
-        
-        // Check if we need to reset the window
-        if (currentTime - windowStartTime >= windowDurationMs) {
-            // Support multiple window skips
-            long windowsPassed = (currentTime - windowStartTime) / windowDurationMs;
-            windowStartTime += windowsPassed * windowDurationMs;
-            currentCount.set(0);
+        int current = currentCount.addAndGet(tokens);
+        if (current <= capacity) {
+            return new ConsumptionResult(true, capacity - current, capacity);
         }
         
-        // In Fixed Window, the 'refillRate' is the actual limit per window
-        // Use the larger of capacity or refillRate to determine the limit
-        int limit = Math.max(capacity, refillRate);
+        // Exceeded capacity, rollback
+        currentCount.addAndGet(-tokens);
+        return new ConsumptionResult(false, capacity - currentCount.get(), capacity);
+    }
+    
+    private void resetIfNecessary() {
+        long now = System.currentTimeMillis();
+        long elapsed = now - windowStart.get();
         
-        // Check if adding tokens would exceed limit
-        int current = currentCount.get();
-        if (current + tokens > limit) {
-            return false;
+        if (elapsed > windowDurationMs) {
+            if (windowStart.compareAndSet(windowStart.get(), now)) {
+                currentCount.set(0);
+            }
         }
-        
-        // Consume tokens
-        currentCount.addAndGet(tokens);
-        return true;
     }
     
     @Override
     public int getCurrentTokens() {
-        long currentTime = System.currentTimeMillis();
-        
-        synchronized (this) {
-            // Check if we need to reset the window
-            if (currentTime - windowStartTime >= windowDurationMs) {
-                resetWindow(currentTime);
-            }
-            
-            return capacity - currentCount.get();
-        }
+        resetIfNecessary();
+        return Math.max(0, capacity - currentCount.get());
+    }
+
+    @Override
+    public void setCurrentTokens(int tokens) {
+        this.currentCount.set(Math.max(0, capacity - tokens));
     }
     
     @Override
@@ -84,48 +81,21 @@ public class FixedWindow implements RateLimiter {
     
     @Override
     public long getLastRefillTime() {
-        return windowStartTime;
+        return windowStart.get();
     }
-    
-    /**
-     * Get the window duration in milliseconds.
-     */
+
+    public int getCurrentUsage() {
+        resetIfNecessary();
+        return currentCount.get();
+    }
+
     public long getWindowDurationMs() {
         return windowDurationMs;
     }
-    
-    /**
-     * Get current usage within the window.
-     */
-    public int getCurrentUsage() {
-        long currentTime = System.currentTimeMillis();
-        
-        synchronized (this) {
-            // Check if we need to reset the window
-            if (currentTime - windowStartTime >= windowDurationMs) {
-                resetWindow(currentTime);
-            }
-            
-            return currentCount.get();
-        }
-    }
-    
-    /**
-     * Get the time remaining in current window.
-     */
+
     public long getWindowTimeRemaining() {
-        long currentTime = System.currentTimeMillis();
-        long elapsed = currentTime - windowStartTime;
-        
-        if (elapsed >= windowDurationMs) {
-            return 0;
-        }
-        
-        return windowDurationMs - elapsed;
-    }
-    
-    private void resetWindow(long currentTime) {
-        this.windowStartTime = currentTime;
-        this.currentCount.set(0);
+        long now = System.currentTimeMillis();
+        long elapsed = now - windowStart.get();
+        return Math.max(0, windowDurationMs - elapsed);
     }
 }

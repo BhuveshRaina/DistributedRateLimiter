@@ -8,37 +8,26 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Adaptive ML Model for rate limit optimization
- * Phase 1: Rule-based decision making
- * Phase 2: Integration with TensorFlow/PyTorch models
+ * Adaptive ML Model for rate limit optimization.
+ * Simplified version using only System Health and User Metrics.
  */
 @Component
 public class AdaptiveMLModel {
     
     private static final Logger logger = LoggerFactory.getLogger(AdaptiveMLModel.class);
     
-    private static final double MIN_CONFIDENCE_THRESHOLD = 0.7;
-    private static final double MAX_ADJUSTMENT_FACTOR = 2.0;
-    private static final double MIN_ADJUSTMENT_FACTOR = 0.5;
-    
     /**
-     * Predict adaptation decision based on multiple signals
+     * Predict adaptation decision based on system health and user metrics.
      */
-    public AdaptationDecision predict(TrafficPattern pattern, 
-                                     SystemHealth health,
-                                     UserBehavior behavior, 
-                                     AnomalyScore anomaly,
+    public AdaptationDecision predict(SystemHealth health,
+                                     UserMetrics userMetrics,
                                      int currentCapacity,
                                      int currentRefillRate) {
         
-        // Extract features from signals
-        double[] features = extractFeatures(pattern, health, behavior, anomaly);
-        
         // Generate decision using rule-based logic
-        DecisionOutput output = makeRuleBasedDecision(features, health, anomaly, 
-                                                      currentCapacity, currentRefillRate);
+        DecisionOutput output = makeRuleBasedDecision(health, userMetrics, currentCapacity, currentRefillRate);
         
-        Map<String, String> reasoning = generateReasoning(pattern, health, behavior, anomaly, output);
+        Map<String, String> reasoning = generateReasoning(health, userMetrics, output);
         
         return AdaptationDecision.builder()
             .shouldAdapt(output.shouldAdapt)
@@ -50,43 +39,10 @@ public class AdaptiveMLModel {
     }
     
     /**
-     * Extract numerical features from signals
+     * Make rule-based decision focusing on System Health and User Metrics.
      */
-    private double[] extractFeatures(TrafficPattern pattern, 
-                                    SystemHealth health,
-                                    UserBehavior behavior, 
-                                    AnomalyScore anomaly) {
-        return new double[] {
-            // System health features
-            health.getCpuUtilization(),
-            health.getMemoryUtilization(),
-            health.getResponseTimeP95() / 1000.0, // Normalize to seconds
-            health.getErrorRate(),
-            health.isRedisHealthy() ? 1.0 : 0.0,
-            
-            // Traffic pattern features
-            pattern.getConfidence(),
-            getTrendScore(pattern.getTrend()),
-            pattern.getVolatility().getCoefficientOfVariation(),
-            
-            // User behavior features
-            behavior.getAverageRequestRate(),
-            behavior.getBurstiness(),
-            behavior.getAnomalyScore(),
-            
-            // Anomaly features
-            anomaly.isAnomaly() ? 1.0 : 0.0,
-            anomaly.getZScore(),
-            anomaly.getConfidence()
-        };
-    }
-    
-    /**
-     * Make rule-based decision (Phase 1)
-     */
-    private DecisionOutput makeRuleBasedDecision(double[] features, 
-                                                 SystemHealth health, 
-                                                 AnomalyScore anomaly,
+    private DecisionOutput makeRuleBasedDecision(SystemHealth health, 
+                                                 UserMetrics userMetrics,
                                                  int currentCapacity,
                                                  int currentRefillRate) {
         
@@ -96,72 +52,56 @@ public class AdaptiveMLModel {
         output.confidence = 0.7;
         output.shouldAdapt = false;
         
-        // Rule 1: System under stress - reduce limits (Temporarily set to 1% for testing)
-        if (health.getCpuUtilization() > 0.01 || health.getResponseTimeP95() > 2000) {
+        // Rule 1: System under heavy stress - aggressive reduction
+        if (health.getCpuUtilization() > 0.8 || health.getResponseTimeP95() > 1000) {
             output.shouldAdapt = true;
-            output.capacity = (int) (currentCapacity * 0.5); // Reduce by 50%
+            output.capacity = (int) (currentCapacity * 0.5);
             output.refillRate = (int) (currentRefillRate * 0.5);
             output.confidence = 0.95;
-            output.reason = "System under stress (CPU > 1%)";
+            output.reason = "System under heavy stress (CPU > 80% or P95 > 1s)";
             return output;
         }
-        
-        // Rule 2: Critical anomaly detected - reduce limits
-        if (anomaly.isAnomaly() && "CRITICAL".equals(anomaly.getSeverity())) {
+
+        // Rule 2: High denial rate for user - likely hitting limits too hard, reduce further to protect system
+        if (userMetrics.getDenialRate() > 0.3) {
             output.shouldAdapt = true;
-            output.capacity = (int) (currentCapacity * 0.6);
-            output.refillRate = (int) (currentRefillRate * 0.6);
-            output.confidence = 0.9;
-            output.reason = "Critical anomaly detected";
+            output.capacity = (int) (currentCapacity * 0.7);
+            output.refillRate = (int) (currentRefillRate * 0.7);
+            output.confidence = 0.85;
+            output.reason = "High user denial rate (> 30%)";
             return output;
         }
         
-        // Rule 3: High anomaly - moderate reduction
-        if (anomaly.isAnomaly() && ("HIGH".equals(anomaly.getSeverity()) || "MEDIUM".equals(anomaly.getSeverity()))) {
+        // Rule 3: System under moderate stress or user rate very high - moderate reduction
+        if (health.getCpuUtilization() > 0.6 || userMetrics.getCurrentRequestRate() > currentRefillRate * 2) {
             output.shouldAdapt = true;
             output.capacity = (int) (currentCapacity * 0.8);
             output.refillRate = (int) (currentRefillRate * 0.8);
-            output.confidence = 0.75;
-            output.reason = "Anomaly detected";
+            output.confidence = 0.8;
+            output.reason = "Moderate system stress or excessive user request rate";
             return output;
         }
         
-        // Rule 4: System has capacity and no anomalies - increase limits
-        if (health.getCpuUtilization() < 0.03 && 
-            health.getErrorRate() < 0.001 && 
-            !anomaly.isAnomaly()) {
+        // Rule 4: System has high capacity and user is stable - increase limits
+        if (health.getCpuUtilization() < 0.3 && health.getErrorRate() < 0.001 && userMetrics.getDenialRate() < 0.05) {
             output.shouldAdapt = true;
-            output.capacity = (int) (currentCapacity * 1.3);
-            output.refillRate = (int) (currentRefillRate * 1.3);
-            output.confidence = 0.75;
-            output.reason = "System has high capacity (CPU < 3%)";
-            return output;
-        }
-        
-        // Rule 5: Moderate capacity - small increase
-        if (health.getCpuUtilization() < 0.05 && 
-            health.getErrorRate() < 0.005 && 
-            !anomaly.isAnomaly()) {
-            output.shouldAdapt = true;
-            output.capacity = (int) (currentCapacity * 1.1);
-            output.refillRate = (int) (currentRefillRate * 1.1);
-            output.confidence = 0.65;
-            output.reason = "System stable with moderate capacity (CPU < 5%)";
+            output.capacity = (int) (currentCapacity * 1.2);
+            output.refillRate = (int) (currentRefillRate * 1.2);
+            output.confidence = 0.8;
+            output.reason = "System has high capacity and low user denial rate";
             return output;
         }
         
         // No adaptation needed
-        output.reason = "System stable, no adaptation needed";
+        output.reason = "System and user metrics stable, no adaptation needed";
         return output;
     }
     
     /**
-     * Generate human-readable reasoning
+     * Generate human-readable reasoning.
      */
-    private Map<String, String> generateReasoning(TrafficPattern pattern, 
-                                                  SystemHealth health,
-                                                  UserBehavior behavior, 
-                                                  AnomalyScore anomaly,
+    private Map<String, String> generateReasoning(SystemHealth health,
+                                                  UserMetrics userMetrics,
                                                   DecisionOutput output) {
         Map<String, String> reasoning = new HashMap<>();
         
@@ -169,61 +109,23 @@ public class AdaptiveMLModel {
         
         // System metrics
         reasoning.put("systemMetrics", 
-            String.format("CPU: %.1f%%, Memory: %.1f%%, Response Time P95: %.0fms, Error Rate: %.3f%%",
+            String.format("CPU: %.1f%%, Memory: %.1f%%, P95: %.0fms, Error Rate: %.3f%%",
                          health.getCpuUtilization() * 100,
                          health.getMemoryUtilization() * 100,
                          health.getResponseTimeP95(),
                          health.getErrorRate() * 100));
         
-        // Traffic pattern
-        if (pattern.getTrend() != null) {
-            reasoning.put("trafficTrend", 
-                String.format("Direction: %s, Volatility: %s",
-                             pattern.getTrend().getDirection(),
-                             pattern.getVolatility().getVolatilityLevel()));
-        }
-        
-        // Anomaly status
-        if (anomaly.isAnomaly()) {
-            reasoning.put("anomaly", 
-                String.format("Detected: %s, Severity: %s, Type: %s",
-                             anomaly.isAnomaly(),
-                             anomaly.getSeverity(),
-                             anomaly.getType()));
-        } else {
-            reasoning.put("anomaly", "No anomalies detected");
-        }
-        
-        // User behavior
-        reasoning.put("userBehavior",
-            String.format("Avg Rate: %.2f req/s, Burstiness: %.2f, Session: %.0fs",
-                         behavior.getAverageRequestRate(),
-                         behavior.getBurstiness(),
-                         behavior.getSessionDuration()));
+        // User metrics
+        reasoning.put("userMetrics",
+            String.format("Request Rate: %.2f req/s, Denial Rate: %.1f%%",
+                         userMetrics.getCurrentRequestRate(),
+                         userMetrics.getDenialRate() * 100));
         
         return reasoning;
     }
     
     /**
-     * Convert trend to numerical score
-     */
-    private double getTrendScore(TrafficPattern.TrendInfo trend) {
-        if (trend == null) {
-            return 0.0;
-        }
-        
-        switch (trend.getDirection()) {
-            case "INCREASING":
-                return 1.0;
-            case "DECREASING":
-                return -1.0;
-            default:
-                return 0.0;
-        }
-    }
-    
-    /**
-     * Decision output holder
+     * Decision output holder.
      */
     private static class DecisionOutput {
         boolean shouldAdapt;

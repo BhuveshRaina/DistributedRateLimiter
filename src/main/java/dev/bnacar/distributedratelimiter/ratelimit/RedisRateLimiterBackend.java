@@ -58,6 +58,15 @@ public class RedisRateLimiterBackend implements RateLimiterBackend {
     }
     
     @Override
+    public void remove(String key) {
+        try {
+            redisTemplate.delete(keyPrefix + key);
+        } catch (Exception e) {
+            // Ignore errors during removal
+        }
+    }
+
+    @Override
     public void clear() {
         try {
             // Delete all keys with our prefix

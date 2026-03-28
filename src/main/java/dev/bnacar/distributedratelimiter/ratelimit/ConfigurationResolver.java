@@ -79,6 +79,8 @@ public class ConfigurationResolver {
         if (scheduleManager != null) {
             RateLimitConfig scheduledConfig = scheduleManager.getActiveConfig(canonicalKey);
             if (scheduledConfig != null) {
+                org.slf4j.LoggerFactory.getLogger(ConfigurationResolver.class)
+                    .info("Resolved scheduled config for key {}: capacity={}", canonicalKey, scheduledConfig.getCapacity());
                 return scheduledConfig;
             }
         }

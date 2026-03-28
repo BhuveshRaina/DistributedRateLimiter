@@ -5,22 +5,24 @@ public class RateLimitResponse {
     private final int tokensRequested;
     private final boolean allowed;
     private final int remainingTokens;
+    private final int capacity;
     private final AdaptiveInfo adaptiveInfo;
     private String algorithm;
 
     public RateLimitResponse(String key, int tokensRequested, boolean allowed) {
-        this(key, tokensRequested, allowed, -1, null);
+        this(key, tokensRequested, allowed, -1, 0, null);
     }
 
     public RateLimitResponse(String key, int tokensRequested, boolean allowed, int remainingTokens) {
-        this(key, tokensRequested, allowed, remainingTokens, null);
+        this(key, tokensRequested, allowed, remainingTokens, 0, null);
     }
 
-    public RateLimitResponse(String key, int tokensRequested, boolean allowed, int remainingTokens, AdaptiveInfo adaptiveInfo) {
+    public RateLimitResponse(String key, int tokensRequested, boolean allowed, int remainingTokens, int capacity, AdaptiveInfo adaptiveInfo) {
         this.key = key;
         this.tokensRequested = tokensRequested;
         this.allowed = allowed;
         this.remainingTokens = remainingTokens;
+        this.capacity = capacity;
         this.adaptiveInfo = adaptiveInfo;
     }
 
@@ -38,6 +40,10 @@ public class RateLimitResponse {
 
     public int getRemainingTokens() {
         return remainingTokens;
+    }
+
+    public int getCapacity() {
+        return capacity;
     }
 
     public AdaptiveInfo getAdaptiveInfo() {

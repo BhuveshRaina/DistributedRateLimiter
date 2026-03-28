@@ -16,17 +16,15 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Main adaptive rate limiting engine that coordinates all components
+ * Simplified adaptive rate limiting engine focusing on System Health and User Metrics.
  */
 @Service
 public class AdaptiveRateLimitEngine {
     
     private static final Logger logger = LoggerFactory.getLogger(AdaptiveRateLimitEngine.class);
     
-    private final TrafficPatternAnalyzer trafficAnalyzer;
     private final SystemMetricsCollector metricsCollector;
-    private final UserBehaviorModeler behaviorModeler;
-    private final AnomalyDetector anomalyDetector;
+    private final UserMetricsModeler userMetricsModeler;
     private final AdaptiveMLModel adaptiveModel;
     private final ConfigurationResolver configurationResolver;
     
@@ -46,10 +44,8 @@ public class AdaptiveRateLimitEngine {
     private final int maxCapacity;
     
     public AdaptiveRateLimitEngine(
-            TrafficPatternAnalyzer trafficAnalyzer,
             SystemMetricsCollector metricsCollector,
-            UserBehaviorModeler behaviorModeler,
-            AnomalyDetector anomalyDetector,
+            UserMetricsModeler userMetricsModeler,
             AdaptiveMLModel adaptiveModel,
             @Lazy ConfigurationResolver configurationResolver,
             @Value("${ratelimiter.adaptive.enabled:true}") boolean enabled,
@@ -59,10 +55,8 @@ public class AdaptiveRateLimitEngine {
             @Value("${ratelimiter.adaptive.min-capacity:10}") int minCapacity,
             @Value("${ratelimiter.adaptive.max-capacity:100000}") int maxCapacity) {
         
-        this.trafficAnalyzer = trafficAnalyzer;
         this.metricsCollector = metricsCollector;
-        this.behaviorModeler = behaviorModeler;
-        this.anomalyDetector = anomalyDetector;
+        this.userMetricsModeler = userMetricsModeler;
         this.adaptiveModel = adaptiveModel;
         this.configurationResolver = configurationResolver;
         this.enabled = enabled;
@@ -72,12 +66,12 @@ public class AdaptiveRateLimitEngine {
         this.minCapacity = minCapacity;
         this.maxCapacity = maxCapacity;
         
-        logger.info("Adaptive Rate Limit Engine initialized - enabled: {}, interval: {}ms", 
+        logger.info("Simplified Adaptive Rate Limit Engine initialized - enabled: {}, interval: {}ms", 
                    enabled, evaluationIntervalMs);
     }
     
     /**
-     * Evaluate adaptations periodically (every 5 minutes by default)
+     * Evaluate adaptations periodically.
      */
     @Scheduled(fixedRateString = "${ratelimiter.adaptive.evaluation-interval-ms:300000}")
     public void evaluateAdaptations() {
@@ -85,9 +79,7 @@ public class AdaptiveRateLimitEngine {
             return;
         }
         
-        // Get all active keys
         Set<String> activeKeys = getActiveKeys();
-        
         if (activeKeys.isEmpty()) {
             return;
         }
@@ -114,7 +106,7 @@ public class AdaptiveRateLimitEngine {
     }
     
     /**
-     * Generate adaptation decision for a key
+     * Generate adaptation decision for a key using System Health and User Metrics.
      */
     private AdaptationDecision generateAdaptationDecision(String key) {
         // Check for manual override
@@ -130,23 +122,20 @@ public class AdaptiveRateLimitEngine {
         // Get current configuration
         RateLimitConfig currentConfig = configurationResolver.getBaseConfig(key);
         
-        // Collect signals from all components
-        TrafficPattern pattern = trafficAnalyzer.analyzePattern(key);
+        // Collect signals
         SystemHealth health = metricsCollector.getCurrentHealth();
-        UserBehavior behavior = behaviorModeler.getCurrentBehavior(key);
-        AnomalyScore anomaly = anomalyDetector.detectAnomalies(key);
+        UserMetrics userMetrics = userMetricsModeler.getUserMetrics(key);
         
         // Use ML model to generate decision
-        return adaptiveModel.predict(pattern, health, behavior, anomaly, 
+        return adaptiveModel.predict(health, userMetrics, 
                                      currentConfig.getCapacity(), 
                                      currentConfig.getRefillRate());
     }
     
     /**
-     * Apply adaptation decision
+     * Apply adaptation decision.
      */
     private void applyAdaptation(String key, AdaptationDecision decision) {
-        // Get original configuration
         RateLimitConfig originalConfig = configurationResolver.getBaseConfig(key);
         
         // Apply safety constraints
@@ -176,13 +165,11 @@ public class AdaptiveRateLimitEngine {
     }
     
     /**
-     * Enforce safety constraints on adapted values
+     * Enforce safety constraints on adapted values.
      */
     private int enforceConstraints(int recommendedValue, int originalValue) {
-        // Enforce min/max capacity
         int constrained = Math.max(minCapacity, Math.min(maxCapacity, recommendedValue));
         
-        // Enforce max adjustment factor
         int maxAllowed = (int) (originalValue * maxAdjustmentFactor);
         int minAllowed = (int) (originalValue / maxAdjustmentFactor);
         
@@ -192,39 +179,20 @@ public class AdaptiveRateLimitEngine {
     }
     
     /**
-     * Get adaptive status for all tracked keys
-     */
-    public Map<String, AdaptiveStatusInfo> getAllStatuses() {
-        Map<String, AdaptiveStatusInfo> statuses = new HashMap<>();
-        Set<String> allKeys = getActiveKeys();
-        
-        for (String key : allKeys) {
-            statuses.put(key, getStatus(key));
-        }
-        
-        return statuses;
-    }
-
-    /**
-     * Get active keys for evaluation
-     * Returns all keys that have been tracked during traffic recording
+     * Get active keys for evaluation.
      */
     private Set<String> getActiveKeys() {
         Set<String> keys = new java.util.HashSet<>();
-        // Include keys that have traffic recorded
         keys.addAll(trackedKeys);
-        // Include keys with adapted limits
         keys.addAll(adaptedLimits.keySet());
-        // Include keys with manual overrides
         keys.addAll(manualOverrides.keySet());
         return keys;
     }
     
     /**
-     * Get adaptive status for a key
+     * Get adaptive status for a key.
      */
     public AdaptiveStatusInfo getStatus(String key) {
-        // Check for manual override first
         AdaptationOverride override = manualOverrides.get(key);
         if (override != null) {
             RateLimitConfig originalConfig = configurationResolver.getBaseConfig(key);
@@ -244,19 +212,17 @@ public class AdaptiveRateLimitEngine {
         }
 
         AdaptedLimits adapted = adaptedLimits.get(key);
-        
         if (adapted == null) {
             RateLimitConfig config = configurationResolver.getBaseConfig(key);
             
-            // Check if key is being tracked (in learning phase)
             if (trackedKeys.contains(key)) {
                 Map<String, String> reasoning = new HashMap<>();
-                reasoning.put("decision", "Collecting traffic patterns");
+                reasoning.put("decision", "Collecting metrics");
                 reasoning.put("status", "Learning in progress");
                 
                 return new AdaptiveStatusInfo(
                     "LEARNING",
-                    0.3, // Initial confidence during learning
+                    0.3,
                     config.getCapacity(),
                     config.getRefillRate(),
                     config.getCapacity(),
@@ -286,9 +252,21 @@ public class AdaptiveRateLimitEngine {
             adapted.reasoning
         );
     }
+
+    /**
+     * Get adaptive status for all tracked keys.
+     */
+    public Map<String, AdaptiveStatusInfo> getAllStatuses() {
+        Map<String, AdaptiveStatusInfo> statuses = new HashMap<>();
+        Set<String> allKeys = getActiveKeys();
+        for (String key : allKeys) {
+            statuses.put(key, getStatus(key));
+        }
+        return statuses;
+    }
     
     /**
-     * Set manual override for a key
+     * Set manual override for a key.
      */
     public void setOverride(String key, AdaptationOverride override) {
         manualOverrides.put(key, override);
@@ -297,7 +275,7 @@ public class AdaptiveRateLimitEngine {
     }
     
     /**
-     * Remove manual override for a key
+     * Remove manual override for a key.
      */
     public void removeOverride(String key) {
         manualOverrides.remove(key);
@@ -305,10 +283,9 @@ public class AdaptiveRateLimitEngine {
     }
     
     /**
-     * Get adapted limits for a key (if any)
+     * Get adapted limits for a key.
      */
     public AdaptedLimits getAdaptedLimits(String key) {
-        // Check for manual override first
         AdaptationOverride override = manualOverrides.get(key);
         if (override != null) {
             RateLimitConfig originalConfig = configurationResolver.getBaseConfig(key);
@@ -326,25 +303,18 @@ public class AdaptiveRateLimitEngine {
     }
     
     /**
-     * Record traffic event for analysis
+     * Record traffic event for analysis.
      */
     public void recordTrafficEvent(String key, int tokensRequested, boolean allowed) {
         if (!enabled) {
             return;
         }
-        
-        // Track this key for evaluation
         trackedKeys.add(key);
-        
-        trafficAnalyzer.recordTrafficEvent(key, tokensRequested, allowed);
-        behaviorModeler.recordRequest(key, tokensRequested, allowed);
-        
-        // Record rate for anomaly detection
-        anomalyDetector.recordTrafficRate(key, tokensRequested);
+        userMetricsModeler.recordRequest(key, tokensRequested, allowed);
     }
     
     /**
-     * Adaptive status information
+     * Adaptive status information.
      */
     public static class AdaptiveStatusInfo {
         public final String mode;
@@ -370,7 +340,7 @@ public class AdaptiveRateLimitEngine {
     }
     
     /**
-     * Adapted limits holder
+     * Adapted limits holder.
      */
     public static class AdaptedLimits {
         public final int originalCapacity;
@@ -396,7 +366,7 @@ public class AdaptiveRateLimitEngine {
     }
     
     /**
-     * Manual override configuration
+     * Manual override configuration.
      */
     public static class AdaptationOverride {
         public final int capacity;

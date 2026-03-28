@@ -14,13 +14,27 @@ interface ScheduleFormProps {
   onSuccess: () => void;
 }
 
+/**
+ * Helper to convert ISO string (UTC) to local datetime-local string (YYYY-MM-DDThh:mm)
+ */
+const toLocalISOString = (isoString: string | undefined): string => {
+  if (!isoString) return '';
+  const date = new Date(isoString);
+  if (isNaN(date.getTime())) return '';
+  
+  // Adjust for local timezone offset
+  const offset = date.getTimezoneOffset() * 60000;
+  const localDate = new Date(date.getTime() - offset);
+  return localDate.toISOString().slice(0, 16);
+};
+
 export const ScheduleForm = ({ schedule, onClose, onSuccess }: ScheduleFormProps) => {
   const [formData, setFormData] = useState<ScheduleRequest>({
     name: schedule?.name || '',
     keyPattern: schedule?.keyPattern || '',
     type: (schedule?.type as ScheduleType) || 'RECURRING',
     cronExpression: schedule?.cronExpression || '0 0 9-17 * * MON-FRI',
-    timezone: schedule?.timezone || 'UTC',
+    timezone: schedule?.timezone || 'Asia/Kolkata',
     startTime: schedule?.startTime || '',
     endTime: schedule?.endTime || '',
     limits: {
@@ -42,12 +56,21 @@ export const ScheduleForm = ({ schedule, onClose, onSuccess }: ScheduleFormProps
     e.preventDefault();
     setLoading(true);
 
+    // Clean up irrelevant fields based on type
+    const submitData = { ...formData };
+    if (formData.type === 'RECURRING') {
+      submitData.startTime = '';
+      submitData.endTime = '';
+    } else {
+      submitData.cronExpression = '';
+    }
+
     try {
       if (schedule) {
-        await rateLimiterApi.updateSchedule(schedule.name, formData);
+        await rateLimiterApi.updateSchedule(schedule.name, submitData);
         toast.success(`Schedule "${formData.name}" updated successfully`);
       } else {
-        await rateLimiterApi.createSchedule(formData);
+        await rateLimiterApi.createSchedule(submitData);
         toast.success(`Schedule "${formData.name}" created successfully`);
       }
       onSuccess();
@@ -130,7 +153,7 @@ export const ScheduleForm = ({ schedule, onClose, onSuccess }: ScheduleFormProps
                 id="timezone"
                 value={formData.timezone}
                 onChange={(e) => handleChange('timezone', e.target.value)}
-                placeholder="UTC"
+                placeholder="Asia/Kolkata"
                 required
               />
             </div>
@@ -156,21 +179,21 @@ export const ScheduleForm = ({ schedule, onClose, onSuccess }: ScheduleFormProps
           {(formData.type === 'ONE_TIME' || formData.type === 'EVENT_DRIVEN') && (
             <div className="grid gap-4 md:grid-cols-2">
               <div>
-                <Label htmlFor="startTime">Start Time (ISO 8601)</Label>
+                <Label htmlFor="startTime">Start Time (Local)</Label>
                 <Input
                   id="startTime"
                   type="datetime-local"
-                  value={formData.startTime ? new Date(formData.startTime).toISOString().slice(0, 16) : ''}
+                  value={toLocalISOString(formData.startTime)}
                   onChange={(e) => handleChange('startTime', new Date(e.target.value).toISOString())}
                   required
                 />
               </div>
               <div>
-                <Label htmlFor="endTime">End Time (ISO 8601)</Label>
+                <Label htmlFor="endTime">End Time (Local)</Label>
                 <Input
                   id="endTime"
                   type="datetime-local"
-                  value={formData.endTime ? new Date(formData.endTime).toISOString().slice(0, 16) : ''}
+                  value={toLocalISOString(formData.endTime)}
                   onChange={(e) => handleChange('endTime', new Date(e.target.value).toISOString())}
                   required
                 />
@@ -181,7 +204,7 @@ export const ScheduleForm = ({ schedule, onClose, onSuccess }: ScheduleFormProps
           {/* Rate Limits */}
           <div>
             <h3 className="font-medium mb-2">Active Limits</h3>
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
               <div>
                 <Label htmlFor="capacity">Capacity</Label>
                 <Input
@@ -201,6 +224,23 @@ export const ScheduleForm = ({ schedule, onClose, onSuccess }: ScheduleFormProps
                   onChange={(e) => handleLimitsChange('refillRate', parseInt(e.target.value))}
                   required
                 />
+              </div>
+              <div>
+                <Label htmlFor="algorithm">Algorithm</Label>
+                <Select 
+                  value={formData.limits.algorithm || 'TOKEN_BUCKET'} 
+                  onValueChange={(value) => handleLimitsChange('algorithm', value)}
+                >
+                  <SelectTrigger id="algorithm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="TOKEN_BUCKET">Token Bucket</SelectItem>
+                    <SelectItem value="FIXED_WINDOW">Fixed Window</SelectItem>
+                    <SelectItem value="SLIDING_WINDOW">Sliding Window</SelectItem>
+                    <SelectItem value="LEAKY_BUCKET">Leaky Bucket</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div>
                 <Label htmlFor="priority">Priority</Label>

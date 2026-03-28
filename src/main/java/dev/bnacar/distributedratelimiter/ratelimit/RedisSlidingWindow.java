@@ -36,6 +36,37 @@ public class RedisSlidingWindow implements RateLimiter {
     }
     
     @Override
+    public ConsumptionResult tryConsumeWithResult(int tokens) {
+        if (tokens <= 0) {
+            return new ConsumptionResult(false, getCurrentTokens(), capacity);
+        }
+        
+        try {
+            long currentTime = System.currentTimeMillis();
+            List<Object> result = redisTemplate.execute(
+                slidingWindowScript,
+                Collections.singletonList(key),
+                capacity, windowSizeMs, tokens, currentTime
+            );
+            
+            if (result != null && result.size() >= 2) {
+                // Result: {success, current_count, capacity, window_size, current_time}
+                Number success = (Number) result.get(0);
+                Number currentCount = (Number) result.get(1);
+                
+                boolean allowed = success != null && success.intValue() == 1;
+                int remaining = capacity - (currentCount != null ? currentCount.intValue() : 0);
+                
+                return new ConsumptionResult(allowed, remaining, capacity);
+            }
+            
+            return new ConsumptionResult(false, 0, capacity);
+        } catch (Exception e) {
+            return new ConsumptionResult(false, 0, capacity);
+        }
+    }
+
+    @Override
     public boolean tryConsume(int tokens) {
         if (tokens <= 0) {
             return false;
@@ -80,6 +111,11 @@ public class RedisSlidingWindow implements RateLimiter {
         } catch (Exception e) {
             return capacity;
         }
+    }
+
+    @Override
+    public void setCurrentTokens(int tokens) {
+        // No-op for sliding window
     }
     
     @Override

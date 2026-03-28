@@ -75,6 +75,11 @@ public class InMemoryRateLimiterBackend implements RateLimiterBackend {
     }
     
     @Override
+    public void remove(String key) {
+        buckets.remove(key);
+    }
+
+    @Override
     public void clear() {
         buckets.clear();
     }

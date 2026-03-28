@@ -1,128 +1,99 @@
 package dev.bnacar.distributedratelimiter.ratelimit;
 
-import java.util.concurrent.ConcurrentLinkedDeque;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
- * Sliding window rate limiter implementation.
- * Tracks requests within a fixed time window and allows requests
- * if they don't exceed the configured capacity within that window.
+ * Standard in-memory Sliding Window Log rate limiting implementation.
  */
 public class SlidingWindow implements RateLimiter {
     
     private final int capacity;
-    private final int refillRate; // For interface compatibility - represents requests per second
-    private final long windowSizeMs;
-    private final ConcurrentLinkedDeque<RequestRecord> requests;
-    private final AtomicInteger currentCount;
-    
-    private static class RequestRecord {
-        final long timestamp;
-        final int tokens;
-        
-        RequestRecord(long timestamp, int tokens) {
-            this.timestamp = timestamp;
-            this.tokens = tokens;
-        }
-    }
+    private final int windowMs;
+    private final ConcurrentLinkedQueue<Long> requestLog = new ConcurrentLinkedQueue<>();
     
     public SlidingWindow(int capacity, int refillRate) {
-        // In a sliding window, 'refillRate' is the actual limit (req/sec)
-        // 'capacity' is used as the burst allowance
-        this.capacity = Math.max(capacity, refillRate);
-        this.refillRate = refillRate;
-        this.windowSizeMs = 1000; // 1 second window
-        this.requests = new ConcurrentLinkedDeque<>();
-        this.currentCount = new AtomicInteger(0);
+        this.capacity = capacity;
+        // Interpret refillRate as requests per second, so window is 1 second
+        this.windowMs = 1000;
     }
     
-    /**
-     * Attempts to consume the specified number of tokens.
-     * @param tokens Number of tokens to consume
-     * @return true if tokens were successfully consumed, false otherwise
-     */
-    public synchronized boolean tryConsume(int tokens) {
+    @Override
+    public boolean tryConsume(int tokens) {
+        return tryConsumeWithResult(tokens).allowed;
+    }
+    
+    @Override
+    public synchronized ConsumptionResult tryConsumeWithResult(int tokens) {
+        long now = System.currentTimeMillis();
+        long windowStart = now - windowMs;
+        
+        // Remove outdated entries
+        while (!requestLog.isEmpty() && requestLog.peek() < windowStart) {
+            requestLog.poll();
+        }
+        
         if (tokens <= 0) {
-            return false;
+            return new ConsumptionResult(false, capacity - requestLog.size(), capacity);
         }
         
-        long currentTime = System.currentTimeMillis();
-        cleanupExpiredRequests(currentTime);
-        
-        int currentUsage = currentCount.get();
-        if (currentUsage + tokens > capacity) {
-            return false;
+        if (requestLog.size() + tokens <= capacity) {
+            for (int i = 0; i < tokens; i++) {
+                requestLog.add(now);
+            }
+            return new ConsumptionResult(true, capacity - requestLog.size(), capacity);
         }
         
-        // Add the new request
-        requests.addLast(new RequestRecord(currentTime, tokens));
-        currentCount.addAndGet(tokens);
-        
-        return true;
+        return new ConsumptionResult(false, capacity - requestLog.size(), capacity);
     }
     
-    /**
-     * Remove requests that are outside the sliding window.
-     */
-    private void cleanupExpiredRequests(long currentTime) {
-        long windowStart = currentTime - windowSizeMs;
-        
-        while (!requests.isEmpty() && requests.peekFirst().timestamp < windowStart) {
-            RequestRecord expired = requests.removeFirst();
-            currentCount.addAndGet(-expired.tokens);
-        }
-    }
-    
-    /**
-     * Get current number of tokens consumed in the window.
-     * This is equivalent to getCurrentTokens() in TokenBucket but inverted
-     * (shows used rather than available).
-     */
+    @Override
     public int getCurrentTokens() {
-        long currentTime = System.currentTimeMillis();
-        synchronized (this) {
-            cleanupExpiredRequests(currentTime);
-            return Math.max(0, capacity - currentCount.get());
+        long now = System.currentTimeMillis();
+        long windowStart = now - windowMs;
+        
+        // Remove outdated entries (best effort)
+        while (!requestLog.isEmpty() && requestLog.peek() < windowStart) {
+            requestLog.poll();
+        }
+        
+        return Math.max(0, capacity - requestLog.size());
+    }
+
+    @Override
+    public void setCurrentTokens(int tokens) {
+        requestLog.clear();
+        long now = System.currentTimeMillis();
+        int toAdd = Math.max(0, capacity - tokens);
+        for (int i = 0; i < toAdd; i++) {
+            requestLog.add(now);
         }
     }
     
-    /**
-     * Get the maximum capacity.
-     */
+    @Override
     public int getCapacity() {
         return capacity;
     }
     
-    /**
-     * Get the refill rate (for compatibility).
-     */
+    @Override
     public int getRefillRate() {
-        return refillRate;
+        return capacity; // Simplified for 1s window
     }
     
-    /**
-     * Get the window size in milliseconds.
-     */
-    public long getWindowSizeMs() {
-        return windowSizeMs;
-    }
-    
-    /**
-     * Get current usage within the window.
-     */
-    public int getCurrentUsage() {
-        long currentTime = System.currentTimeMillis();
-        synchronized (this) {
-            cleanupExpiredRequests(currentTime);
-            return currentCount.get();
-        }
-    }
-    
-    /**
-     * For compatibility with TokenBucket interface.
-     * Returns the last cleanup time as current time.
-     */
+    @Override
     public long getLastRefillTime() {
         return System.currentTimeMillis();
+    }
+
+    public int getCurrentUsage() {
+        long now = System.currentTimeMillis();
+        long windowStart = now - windowMs;
+        while (!requestLog.isEmpty() && requestLog.peek() < windowStart) {
+            requestLog.poll();
+        }
+        return requestLog.size();
+    }
+
+    public int getWindowSizeMs() {
+        return windowMs;
     }
 }

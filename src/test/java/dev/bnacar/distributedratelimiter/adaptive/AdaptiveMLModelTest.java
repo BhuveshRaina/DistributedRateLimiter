@@ -2,16 +2,9 @@ package dev.bnacar.distributedratelimiter.adaptive;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-
-import java.util.HashMap;
-import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@ExtendWith(MockitoExtension.class)
 class AdaptiveMLModelTest {
 
     private AdaptiveMLModel model;
@@ -22,9 +15,8 @@ class AdaptiveMLModelTest {
     }
 
     @Test
-    void testPredict_SystemUnderStress_HighCPU() {
+    void testPredict_SystemUnderHeavyStress() {
         // Arrange
-        TrafficPattern pattern = createDefaultTrafficPattern();
         SystemHealth health = SystemHealth.builder()
             .cpuUtilization(0.85)  // Above 80% threshold
             .memoryUtilization(0.5)
@@ -32,213 +24,115 @@ class AdaptiveMLModelTest {
             .errorRate(0.01)
             .redisHealthy(true)
             .build();
-        UserBehavior behavior = createDefaultUserBehavior();
-        AnomalyScore anomaly = createNoAnomaly();
-
-        // Act
-        AdaptationDecision decision = model.predict(pattern, health, behavior, anomaly, 1000, 100);
-
-        // Assert
-        assertTrue(decision.shouldAdapt());
-        assertTrue(decision.getRecommendedCapacity() < 1000);  // Should reduce
-        assertEquals(0.85, decision.getConfidence());
-    }
-
-    @Test
-    void testPredict_SystemUnderStress_HighResponseTime() {
-        // Arrange
-        TrafficPattern pattern = createDefaultTrafficPattern();
-        SystemHealth health = SystemHealth.builder()
-            .cpuUtilization(0.5)
-            .memoryUtilization(0.5)
-            .responseTimeP95(2500)  // Above 2000ms threshold
-            .errorRate(0.01)
-            .redisHealthy(true)
-            .build();
-        UserBehavior behavior = createDefaultUserBehavior();
-        AnomalyScore anomaly = createNoAnomaly();
-
-        // Act
-        AdaptationDecision decision = model.predict(pattern, health, behavior, anomaly, 1000, 100);
-
-        // Assert
-        assertTrue(decision.shouldAdapt());
-        assertTrue(decision.getRecommendedCapacity() < 1000);  // Should reduce
-    }
-
-    @Test
-    void testPredict_CriticalAnomaly() {
-        // Arrange
-        TrafficPattern pattern = createDefaultTrafficPattern();
-        SystemHealth health = SystemHealth.builder()
-            .cpuUtilization(0.5)
-            .memoryUtilization(0.5)
-            .responseTimeP95(500)
-            .errorRate(0.01)
-            .redisHealthy(true)
-            .build();
-        UserBehavior behavior = createDefaultUserBehavior();
-        AnomalyScore anomaly = AnomalyScore.builder()
-            .isAnomaly(true)
-            .severity("CRITICAL")
-            .type("SPIKE")
-            .confidence(0.9)
-            .zScore(7.0)
+        UserMetrics userMetrics = UserMetrics.builder()
+            .currentRequestRate(10.0)
+            .denialRate(0.05)
             .build();
 
         // Act
-        AdaptationDecision decision = model.predict(pattern, health, behavior, anomaly, 1000, 100);
+        AdaptationDecision decision = model.predict(health, userMetrics, 1000, 100);
 
         // Assert
         assertTrue(decision.shouldAdapt());
-        assertTrue(decision.getRecommendedCapacity() <= 600);  // Should reduce by 40%
-        assertEquals(0.9, decision.getConfidence());
+        assertEquals(500, decision.getRecommendedCapacity());  // 50% reduction
+        assertEquals(50, decision.getRecommendedRefillRate());
+        assertEquals(0.95, decision.getConfidence());
+        assertTrue(decision.getReasoning().get("decision").contains("heavy stress"));
     }
 
     @Test
-    void testPredict_HighAnomaly() {
+    void testPredict_HighUserDenialRate() {
         // Arrange
-        TrafficPattern pattern = createDefaultTrafficPattern();
         SystemHealth health = SystemHealth.builder()
-            .cpuUtilization(0.5)
-            .memoryUtilization(0.5)
-            .responseTimeP95(500)
+            .cpuUtilization(0.3)
+            .memoryUtilization(0.3)
+            .responseTimeP95(100)
             .errorRate(0.001)
             .redisHealthy(true)
             .build();
-        UserBehavior behavior = createDefaultUserBehavior();
-        AnomalyScore anomaly = AnomalyScore.builder()
-            .isAnomaly(true)
-            .severity("HIGH")
-            .type("SUSTAINED_HIGH")
-            .confidence(0.8)
-            .zScore(5.0)
+        UserMetrics userMetrics = UserMetrics.builder()
+            .currentRequestRate(50.0)
+            .denialRate(0.35)  // Above 30% threshold
             .build();
 
         // Act
-        AdaptationDecision decision = model.predict(pattern, health, behavior, anomaly, 1000, 100);
+        AdaptationDecision decision = model.predict(health, userMetrics, 1000, 100);
 
         // Assert
         assertTrue(decision.shouldAdapt());
-        assertTrue(decision.getRecommendedCapacity() <= 800);  // Should reduce by 20%
+        assertEquals(700, decision.getRecommendedCapacity());  // 30% reduction
+        assertEquals(0.85, decision.getConfidence());
+        assertTrue(decision.getReasoning().get("decision").contains("denial rate"));
     }
 
     @Test
-    void testPredict_SystemHasCapacity() {
+    void testPredict_ModerateStress() {
         // Arrange
-        TrafficPattern pattern = createDefaultTrafficPattern();
         SystemHealth health = SystemHealth.builder()
-            .cpuUtilization(0.2)  // Low CPU
-            .memoryUtilization(0.3)
-            .responseTimeP95(100)
-            .errorRate(0.0005)  // Very low error rate
-            .redisHealthy(true)
-            .build();
-        UserBehavior behavior = createDefaultUserBehavior();
-        AnomalyScore anomaly = createNoAnomaly();
-
-        // Act
-        AdaptationDecision decision = model.predict(pattern, health, behavior, anomaly, 1000, 100);
-
-        // Assert
-        assertTrue(decision.shouldAdapt());
-        assertTrue(decision.getRecommendedCapacity() > 1000);  // Should increase
-        assertEquals(0.75, decision.getConfidence());
-    }
-
-    @Test
-    void testPredict_ModerateLoad() {
-        // Arrange
-        TrafficPattern pattern = createDefaultTrafficPattern();
-        SystemHealth health = SystemHealth.builder()
-            .cpuUtilization(0.4)  // Moderate CPU
+            .cpuUtilization(0.65)  // Above 60% threshold
             .memoryUtilization(0.4)
             .responseTimeP95(200)
-            .errorRate(0.002)  // Low error rate
+            .errorRate(0.005)
             .redisHealthy(true)
             .build();
-        UserBehavior behavior = createDefaultUserBehavior();
-        AnomalyScore anomaly = createNoAnomaly();
+        UserMetrics userMetrics = UserMetrics.builder()
+            .currentRequestRate(10.0)
+            .denialRate(0.02)
+            .build();
 
         // Act
-        AdaptationDecision decision = model.predict(pattern, health, behavior, anomaly, 1000, 100);
+        AdaptationDecision decision = model.predict(health, userMetrics, 1000, 100);
 
         // Assert
         assertTrue(decision.shouldAdapt());
-        assertEquals(1100, decision.getRecommendedCapacity());  // Should increase by 10%
+        assertEquals(800, decision.getRecommendedCapacity());  // 20% reduction
+        assertEquals(0.8, decision.getConfidence());
     }
 
     @Test
-    void testPredict_NoAdaptationNeeded() {
+    void testPredict_HighCapacity() {
         // Arrange
-        TrafficPattern pattern = createDefaultTrafficPattern();
         SystemHealth health = SystemHealth.builder()
-            .cpuUtilization(0.6)  // Normal load
-            .memoryUtilization(0.5)
-            .responseTimeP95(800)
-            .errorRate(0.01)  // Higher error rate prevents increase
+            .cpuUtilization(0.2)  // Low CPU
+            .memoryUtilization(0.2)
+            .responseTimeP95(50)
+            .errorRate(0.0001)
             .redisHealthy(true)
             .build();
-        UserBehavior behavior = createDefaultUserBehavior();
-        AnomalyScore anomaly = createNoAnomaly();
+        UserMetrics userMetrics = UserMetrics.builder()
+            .currentRequestRate(5.0)
+            .denialRate(0.01)  // Low denial
+            .build();
 
         // Act
-        AdaptationDecision decision = model.predict(pattern, health, behavior, anomaly, 1000, 100);
+        AdaptationDecision decision = model.predict(health, userMetrics, 1000, 100);
+
+        // Assert
+        assertTrue(decision.shouldAdapt());
+        assertEquals(1200, decision.getRecommendedCapacity());  // 20% increase
+        assertEquals(0.8, decision.getConfidence());
+    }
+
+    @Test
+    void testPredict_StableNoAdaptation() {
+        // Arrange
+        SystemHealth health = SystemHealth.builder()
+            .cpuUtilization(0.45)
+            .memoryUtilization(0.4)
+            .responseTimeP95(150)
+            .errorRate(0.005)
+            .redisHealthy(true)
+            .build();
+        UserMetrics userMetrics = UserMetrics.builder()
+            .currentRequestRate(10.0)
+            .denialRate(0.1)
+            .build();
+
+        // Act
+        AdaptationDecision decision = model.predict(health, userMetrics, 1000, 100);
 
         // Assert
         assertFalse(decision.shouldAdapt());
-        assertNotNull(decision.getReasoning());
-    }
-
-    @Test
-    void testPredict_IncludesReasoning() {
-        // Arrange
-        TrafficPattern pattern = createDefaultTrafficPattern();
-        SystemHealth health = SystemHealth.builder()
-            .cpuUtilization(0.85)
-            .memoryUtilization(0.5)
-            .responseTimeP95(500)
-            .errorRate(0.01)
-            .redisHealthy(true)
-            .build();
-        UserBehavior behavior = createDefaultUserBehavior();
-        AnomalyScore anomaly = createNoAnomaly();
-
-        // Act
-        AdaptationDecision decision = model.predict(pattern, health, behavior, anomaly, 1000, 100);
-
-        // Assert
-        assertNotNull(decision.getReasoning());
-        assertTrue(decision.getReasoning().containsKey("decision"));
-        assertTrue(decision.getReasoning().containsKey("systemMetrics"));
-    }
-
-    private TrafficPattern createDefaultTrafficPattern() {
-        return TrafficPattern.builder()
-            .key("test:key")
-            .trend(new TrafficPattern.TrendInfo("STABLE", 0.0, 0.7))
-            .volatility(new TrafficPattern.VolatilityMetrics(1.0, 0.5, "MEDIUM"))
-            .confidence(0.8)
-            .build();
-    }
-
-    private UserBehavior createDefaultUserBehavior() {
-        return UserBehavior.builder()
-            .averageRequestRate(10.0)
-            .burstiness(0.5)
-            .sessionDuration(300)
-            .timeOfDayPattern(new UserBehavior.TimeOfDayPattern(14, 3, 2.0))
-            .anomalyScore(0.0)
-            .build();
-    }
-
-    private AnomalyScore createNoAnomaly() {
-        return AnomalyScore.builder()
-            .isAnomaly(false)
-            .severity("NONE")
-            .type("NONE")
-            .confidence(0.0)
-            .zScore(0.0)
-            .build();
+        assertTrue(decision.getReasoning().get("decision").contains("no adaptation needed"));
     }
 }

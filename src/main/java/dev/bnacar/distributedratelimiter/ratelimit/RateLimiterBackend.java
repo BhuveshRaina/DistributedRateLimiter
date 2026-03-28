@@ -23,6 +23,13 @@ public interface RateLimiterBackend {
     boolean isAvailable();
     
     /**
+     * Clear the rate limiter for a specific key.
+     * 
+     * @param key The rate limit key
+     */
+    void remove(String key);
+    
+    /**
      * Clear all rate limiters (for testing/management).
      */
     void clear();

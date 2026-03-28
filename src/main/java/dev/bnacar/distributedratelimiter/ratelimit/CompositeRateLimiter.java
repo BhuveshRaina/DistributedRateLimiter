@@ -37,19 +37,38 @@ public class CompositeRateLimiter implements RateLimiter {
     
     @Override
     public boolean tryConsume(int tokens) {
+        return tryConsumeWithResult(tokens).allowed;
+    }
+
+    @Override
+    public ConsumptionResult tryConsumeWithResult(int tokens) {
+        boolean allowed;
         switch (combinationLogic) {
             case ALL_MUST_PASS:
-                return tryConsumeAllMustPass(tokens);
+                allowed = tryConsumeAllMustPass(tokens);
+                break;
             case ANY_CAN_PASS:
-                return tryConsumeAnyCanPass(tokens);
+                allowed = tryConsumeAnyCanPass(tokens);
+                break;
             case WEIGHTED_AVERAGE:
-                return tryConsumeWeightedAverage(tokens);
+                allowed = tryConsumeWeightedAverage(tokens);
+                break;
             case HIERARCHICAL_AND:
-                return tryConsumeHierarchical(tokens);
+                allowed = tryConsumeHierarchical(tokens);
+                break;
             case PRIORITY_BASED:
-                return tryConsumePriorityBased(tokens);
+                allowed = tryConsumePriorityBased(tokens);
+                break;
             default:
-                throw new IllegalStateException("Unknown combination logic: " + combinationLogic);
+                allowed = false;
+        }
+        return new ConsumptionResult(allowed, getCurrentTokens(), getCapacity());
+    }
+    
+    @Override
+    public void setCurrentTokens(int tokens) {
+        for (LimitComponent component : components) {
+            component.getRateLimiter().setCurrentTokens(tokens);
         }
     }
     
@@ -57,15 +76,9 @@ public class CompositeRateLimiter implements RateLimiter {
      * ALL_MUST_PASS: All components must allow the request.
      */
     private boolean tryConsumeAllMustPass(int tokens) {
-        // First, check if all would allow without consuming
         for (LimitComponent component : components) {
-            // Create a test consumption to check availability without side effects
-            if (!wouldAllow(component, tokens)) {
-                return false;
-            }
+            if (!wouldAllow(component, tokens)) return false;
         }
-        
-        // If all would allow, consume from all
         boolean allConsumed = true;
         for (LimitComponent component : components) {
             if (!component.tryConsume(tokens)) {
@@ -73,7 +86,6 @@ public class CompositeRateLimiter implements RateLimiter {
                 break;
             }
         }
-        
         return allConsumed;
     }
     
@@ -82,9 +94,7 @@ public class CompositeRateLimiter implements RateLimiter {
      */
     private boolean tryConsumeAnyCanPass(int tokens) {
         for (LimitComponent component : components) {
-            if (component.tryConsume(tokens)) {
-                return true;
-            }
+            if (component.tryConsume(tokens)) return true;
         }
         return false;
     }
@@ -95,28 +105,17 @@ public class CompositeRateLimiter implements RateLimiter {
     private boolean tryConsumeWeightedAverage(int tokens) {
         double totalWeight = 0.0;
         double weightedScore = 0.0;
-        
         for (LimitComponent component : components) {
             double weight = component.getWeight();
             totalWeight += weight;
-            
-            if (wouldAllow(component, tokens)) {
-                weightedScore += weight;
-            }
+            if (wouldAllow(component, tokens)) weightedScore += weight;
         }
-        
-        // Allow if weighted average is >= 50%
         boolean allowed = (weightedScore / totalWeight) >= 0.5;
-        
         if (allowed) {
-            // Consume from components that would allow
             for (LimitComponent component : components) {
-                if (wouldAllow(component, tokens)) {
-                    component.tryConsume(tokens);
-                }
+                if (wouldAllow(component, tokens)) component.tryConsume(tokens);
             }
         }
-        
         return allowed;
     }
     
@@ -124,34 +123,24 @@ public class CompositeRateLimiter implements RateLimiter {
      * HIERARCHICAL_AND: Check components in hierarchical order (by scope).
      */
     private boolean tryConsumeHierarchical(int tokens) {
-        // Group by scope and process in order: USER -> TENANT -> GLOBAL
         Map<String, List<LimitComponent>> scopeGroups = components.stream()
                 .collect(Collectors.groupingBy(c -> c.getScope() != null ? c.getScope() : "GLOBAL"));
-        
         String[] scopeOrder = {"USER", "TENANT", "GLOBAL"};
-        
         for (String scope : scopeOrder) {
             List<LimitComponent> scopeComponents = scopeGroups.get(scope);
             if (scopeComponents != null) {
                 for (LimitComponent component : scopeComponents) {
-                    if (!component.tryConsume(tokens)) {
-                        return false;
-                    }
+                    if (!component.tryConsume(tokens)) return false;
                 }
             }
         }
-        
-        // Process any remaining scopes not in the predefined order
         for (Map.Entry<String, List<LimitComponent>> entry : scopeGroups.entrySet()) {
             if (!Arrays.asList(scopeOrder).contains(entry.getKey())) {
                 for (LimitComponent component : entry.getValue()) {
-                    if (!component.tryConsume(tokens)) {
-                        return false;
-                    }
+                    if (!component.tryConsume(tokens)) return false;
                 }
             }
         }
-        
         return true;
     }
     
@@ -159,75 +148,44 @@ public class CompositeRateLimiter implements RateLimiter {
      * PRIORITY_BASED: Check highest priority components first, fail fast.
      */
     private boolean tryConsumePriorityBased(int tokens) {
-        // Components are already sorted by priority (highest first)
         for (LimitComponent component : components) {
-            if (!component.tryConsume(tokens)) {
-                return false; // Fail fast on first denial
-            }
+            if (!component.tryConsume(tokens)) return false;
         }
         return true;
     }
     
-    /**
-     * Check if a component would allow the request without consuming tokens.
-     * This is a simple heuristic based on available tokens.
-     */
     private boolean wouldAllow(LimitComponent component, int tokens) {
         return component.getCurrentTokens() >= tokens;
     }
     
     @Override
     public int getCurrentTokens() {
-        // Return minimum available tokens across all components
-        return components.stream()
-                .mapToInt(LimitComponent::getCurrentTokens)
-                .min()
-                .orElse(0);
+        return components.stream().mapToInt(LimitComponent::getCurrentTokens).min().orElse(0);
     }
     
     @Override
     public int getCapacity() {
-        // Return sum of all component capacities
-        return components.stream()
-                .mapToInt(component -> component.getRateLimiter().getCapacity())
-                .sum();
+        return components.stream().mapToInt(component -> component.getRateLimiter().getCapacity()).sum();
     }
     
     @Override
     public int getRefillRate() {
-        // Return average refill rate across components
-        return (int) components.stream()
-                .mapToInt(component -> component.getRateLimiter().getRefillRate())
-                .average()
-                .orElse(0);
+        return (int) components.stream().mapToInt(component -> component.getRateLimiter().getRefillRate()).average().orElse(0);
     }
     
     @Override
     public long getLastRefillTime() {
-        // Return most recent refill time across components
-        return components.stream()
-                .mapToLong(component -> component.getRateLimiter().getLastRefillTime())
-                .max()
-                .orElse(System.currentTimeMillis());
+        return components.stream().mapToLong(component -> component.getRateLimiter().getLastRefillTime()).max().orElse(System.currentTimeMillis());
     }
     
-    /**
-     * Get all components in this composite rate limiter.
-     */
     public List<LimitComponent> getComponents() {
         return Collections.unmodifiableList(components);
     }
     
-    /**
-     * Get the combination logic used by this composite rate limiter.
-     */
     public CombinationLogic getCombinationLogic() {
         return combinationLogic;
     }
     
-    /**
-     * Get component weights map.
-     */
     public Map<String, Double> getComponentWeights() {
         return Collections.unmodifiableMap(componentWeights);
     }

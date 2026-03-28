@@ -198,7 +198,7 @@ public class RateLimitController {
                 adaptiveInfo = buildAdaptiveInfo(effectiveKey);
             }
             
-            RateLimitResponse response = new RateLimitResponse(request.getKey(), request.getTokens(), allowed, result.remainingTokens, adaptiveInfo);
+            RateLimitResponse response = new RateLimitResponse(request.getKey(), request.getTokens(), allowed, result.remainingTokens, result.capacity, adaptiveInfo);
             
             // Record the algorithm actually used for the response
             RateLimitAlgorithm usedAlgorithm = request.getAlgorithm();

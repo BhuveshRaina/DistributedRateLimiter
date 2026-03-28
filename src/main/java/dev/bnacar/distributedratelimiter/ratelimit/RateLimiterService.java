@@ -134,9 +134,12 @@ public class RateLimiterService {
         
         holder.updateAccessTime();
         
-        // Check if configuration has changed (e.g. adaptive limit applied)
+        // Check if configuration has changed (e.g. adaptive limit applied or schedule active)
         RateLimitConfig currentConfig = configurationResolver.resolveConfig(sharedKey);
-        if (!currentConfig.equals(holder.config)) {
+        if (currentConfig.getCapacity() != holder.config.getCapacity() || 
+            currentConfig.getRefillRate() != holder.config.getRefillRate() ||
+            currentConfig.getAlgorithm() != holder.config.getAlgorithm()) {
+            
             logger.info("Configuration changed for key: {}, updating bucket. Old: {}/{}, New: {}/{}", 
                        sharedKey, holder.config.getCapacity(), holder.config.getRefillRate(),
                        currentConfig.getCapacity(), currentConfig.getRefillRate());
@@ -144,11 +147,9 @@ public class RateLimiterService {
             // Create new rate limiter with updated config
             RateLimiter newRateLimiter = createRateLimiter(currentConfig);
             
-            // If it's a token bucket, we can try to carry over some tokens
-            if (holder.rateLimiter instanceof TokenBucket && newRateLimiter instanceof TokenBucket) {
-                int currentTokens = ((TokenBucket) holder.rateLimiter).getCurrentTokens();
-                ((TokenBucket) newRateLimiter).setCurrentTokens(Math.min(currentTokens, currentConfig.getCapacity()));
-            }
+            // Carry over some tokens to avoid sudden starvation/burst
+            int currentTokens = holder.rateLimiter.getCurrentTokens();
+            newRateLimiter.setCurrentTokens(Math.min(currentTokens, currentConfig.getCapacity()));
             
             // Update the holder with new limiter and config
             holder.rateLimiter = newRateLimiter;

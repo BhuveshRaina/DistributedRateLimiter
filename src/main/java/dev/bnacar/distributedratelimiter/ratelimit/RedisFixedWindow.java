@@ -40,6 +40,39 @@ public class RedisFixedWindow implements RateLimiter {
     }
     
     @Override
+    public ConsumptionResult tryConsumeWithResult(int tokens) {
+        if (tokens <= 0) {
+            return new ConsumptionResult(false, getCurrentTokens(), capacity);
+        }
+        
+        try {
+            long currentTime = System.currentTimeMillis();
+            int limit = Math.max(capacity, refillRate);
+            
+            List<Object> result = redisTemplate.execute(
+                fixedWindowScript,
+                Collections.singletonList(key),
+                limit, windowDurationMs, tokens, currentTime
+            );
+            
+            if (result != null && result.size() >= 2) {
+                // Result: {success, remaining_tokens, current_count, window_start, current_time}
+                Number success = (Number) result.get(0);
+                Number remainingTokens = (Number) result.get(1);
+                
+                boolean allowed = success != null && success.intValue() == 1;
+                int remaining = remainingTokens != null ? remainingTokens.intValue() : 0;
+                
+                return new ConsumptionResult(allowed, remaining, capacity);
+            }
+            
+            return new ConsumptionResult(false, 0, capacity);
+        } catch (Exception e) {
+            return new ConsumptionResult(false, 0, capacity);
+        }
+    }
+
+    @Override
     public boolean tryConsume(int tokens) {
         if (tokens <= 0) {
             return false;
@@ -90,6 +123,11 @@ public class RedisFixedWindow implements RateLimiter {
         } catch (Exception e) {
             return Math.max(capacity, refillRate); // Default to full limit on error
         }
+    }
+
+    @Override
+    public void setCurrentTokens(int tokens) {
+        // No-op
     }
     
     @Override

@@ -77,8 +77,26 @@ public class DistributedRateLimiterService extends RateLimiterService {
         RateLimiterBackend backend = getAvailableBackend();
         try {
             RateLimiter rateLimiter = backend.getRateLimiter(sharedKey, config);
+            
+            // Check if existing limiter's configuration is out of sync with current resolved config
+            if (rateLimiter.getCapacity() != config.getCapacity() || 
+                rateLimiter.getRefillRate() != config.getRefillRate()) {
+                
+                org.slf4j.LoggerFactory.getLogger(DistributedRateLimiterService.class)
+                    .info("Config change detected for key {}. Refreshing limiter: {}/{} -> {}/{}", 
+                          sharedKey, rateLimiter.getCapacity(), rateLimiter.getRefillRate(), 
+                          config.getCapacity(), config.getRefillRate());
+                
+                // Clear the cached limiter so a new one is created with the updated config
+                backend.remove(sharedKey);
+                rateLimiter = backend.getRateLimiter(sharedKey, config);
+            }
+            
             result = rateLimiter.tryConsumeWithResult(tokens);
         } catch (Exception ex) {
+            org.slf4j.LoggerFactory.getLogger(DistributedRateLimiterService.class)
+                .error("Backend error for key {}: {}", sharedKey, ex.getMessage());
+            
             // Fallback to in-memory only if the primary backend (Redis) failed
             if (backend != fallbackBackend) {
                 usingFallback = true;
@@ -86,10 +104,12 @@ public class DistributedRateLimiterService extends RateLimiterService {
                     RateLimiter fallbackLimiter = fallbackBackend.getRateLimiter(sharedKey, config);
                     result = fallbackLimiter.tryConsumeWithResult(tokens);
                 } catch (Exception fallbackEx) {
-                    result = new RateLimiter.ConsumptionResult(false, 0);
+                    org.slf4j.LoggerFactory.getLogger(DistributedRateLimiterService.class)
+                        .error("Fallback backend also failed for key {}: {}", sharedKey, fallbackEx.getMessage());
+                    result = new RateLimiter.ConsumptionResult(false, -1);
                 }
             } else {
-                result = new RateLimiter.ConsumptionResult(false, 0);
+                result = new RateLimiter.ConsumptionResult(false, -1);
             }
         }
 

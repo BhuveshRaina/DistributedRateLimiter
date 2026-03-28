@@ -207,7 +207,7 @@ const Scheduling = () => {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                   <div>
                     <div className="text-sm font-medium mb-1">Type</div>
                     <Badge variant="outline" className={getTypeColor(schedule.type)}>
@@ -223,15 +223,17 @@ const Scheduling = () => {
                     <div className="text-sm font-medium mb-1">Timezone</div>
                     <div className="text-sm text-muted-foreground">{schedule.timezone}</div>
                   </div>
-                  {schedule.cronExpression && (
-                    <div>
+                  
+                  {schedule.type === 'RECURRING' && schedule.cronExpression && (
+                    <div className="md:col-span-2 lg:col-span-1">
                       <div className="text-sm font-medium mb-1">Cron Expression</div>
-                      <div className="text-sm text-muted-foreground font-mono">
+                      <div className="text-sm text-muted-foreground font-mono bg-muted p-1 rounded">
                         {schedule.cronExpression}
                       </div>
                     </div>
                   )}
-                  {schedule.startTime && (
+                  
+                  {schedule.type !== 'RECURRING' && schedule.startTime && (
                     <div>
                       <div className="text-sm font-medium mb-1">Start Time</div>
                       <div className="text-sm text-muted-foreground">
@@ -239,7 +241,8 @@ const Scheduling = () => {
                       </div>
                     </div>
                   )}
-                  {schedule.endTime && (
+                  
+                  {schedule.type !== 'RECURRING' && schedule.endTime && (
                     <div>
                       <div className="text-sm font-medium mb-1">End Time</div>
                       <div className="text-sm text-muted-foreground">
