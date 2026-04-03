@@ -211,6 +211,50 @@ public class ConfigurationResolver {
     }
     
     /**
+     * Update configuration for a specific key.
+     */
+    public void updateKeyConfig(String key, RateLimitConfig config) {
+        RateLimiterConfiguration.KeyConfig keyConfig = new RateLimiterConfiguration.KeyConfig();
+        keyConfig.setCapacity(config.getCapacity());
+        keyConfig.setRefillRate(config.getRefillRate());
+        keyConfig.setCleanupIntervalMs(config.getCleanupIntervalMs());
+        keyConfig.setAlgorithm(config.getAlgorithm());
+        
+        configuration.putKey(key, keyConfig);
+        clearCache();
+    }
+
+    /**
+     * Update configuration for a pattern.
+     */
+    public void updatePatternConfig(String pattern, RateLimitConfig config) {
+        RateLimiterConfiguration.KeyConfig keyConfig = new RateLimiterConfiguration.KeyConfig();
+        keyConfig.setCapacity(config.getCapacity());
+        keyConfig.setRefillRate(config.getRefillRate());
+        keyConfig.setCleanupIntervalMs(config.getCleanupIntervalMs());
+        keyConfig.setAlgorithm(config.getAlgorithm());
+        
+        configuration.putPattern(pattern, keyConfig);
+        clearCache();
+    }
+
+    /**
+     * Remove configuration for a specific key.
+     */
+    public void removeKeyConfig(String key) {
+        configuration.removeKey(key);
+        clearCache();
+    }
+
+    /**
+     * Remove configuration for a pattern.
+     */
+    public void removePatternConfig(String pattern) {
+        configuration.removePattern(pattern);
+        clearCache();
+    }
+
+    /**
      * Clear the configuration cache. Useful when configuration is updated.
      */
     public void clearCache() {

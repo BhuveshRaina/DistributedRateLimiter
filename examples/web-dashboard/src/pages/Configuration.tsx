@@ -305,16 +305,6 @@ const Configuration = () => {
         onEdit={handleEditPatternConfig}
         onDelete={handleDeletePatternConfig}
       />
-
-      <HierarchyVisualization />
-
-      <BulkOperations
-        onExportJSON={handleExportJSON}
-        onImportJSON={handleImportJSON}
-        onImportCSV={handleImportCSV}
-      />
-
-      <ConfigStats stats={stats} />
     </div>
   );
 };

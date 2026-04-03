@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -34,11 +35,12 @@ import {
   AlertTriangle,
   CheckCircle,
   Info,
-  TrendingUp,
-  TrendingDown,
-  Minus,
   Edit3,
   X,
+  Plus,
+  Trash2,
+  Lock,
+  Globe,
 } from "lucide-react";
 import { toast } from "sonner";
 import { rateLimiterApi } from "@/services/rateLimiterApi";
@@ -50,9 +52,17 @@ const Adaptive = () => {
   const [loading, setLoading] = useState(true);
   const [config, setConfig] = useState<AdaptiveConfig | null>(null);
   const [adaptiveStatuses, setAdaptiveStatuses] = useState<AdaptiveStatus[]>([]);
+  const [adaptiveTargets, setAdaptiveTargets] = useState<{ target: string; isPattern: boolean }[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
+  const [addTargetDialogOpen, setAddTargetDialogOpen] = useState(false);
+  const [newTarget, setNewTarget] = useState({ 
+    target: "", 
+    isPattern: false,
+    initialCapacity: 10,
+    initialRefillRate: 2
+  });
   const [overrideForm, setOverrideForm] = useState<AdaptiveOverrideRequest>({
     capacity: 100,
     refillRate: 10,
@@ -61,12 +71,14 @@ const Adaptive = () => {
 
   const loadData = useCallback(async () => {
     try {
-      const [configData, statusesData] = await Promise.all([
+      const [configData, statusesData, targetsData] = await Promise.all([
         rateLimiterApi.getAdaptiveConfig(),
         rateLimiterApi.getAdaptiveStatusForAllKeys(),
+        rateLimiterApi.getAdaptiveTargets(),
       ]);
       setConfig(configData);
       setAdaptiveStatuses(statusesData);
+      setAdaptiveTargets(targetsData);
     } catch (error) {
       console.error("Failed to load adaptive data:", error);
       toast.error("Failed to load adaptive rate limiting data");
@@ -87,6 +99,31 @@ const Adaptive = () => {
     await loadData();
     setRefreshing(false);
     toast.success("Data refreshed");
+  };
+
+  const handleAddTarget = async () => {
+    if (!newTarget.target) return;
+    try {
+      await rateLimiterApi.addAdaptiveTarget(newTarget);
+      toast.success(`Added adaptive target: ${newTarget.target}`);
+      setAddTargetDialogOpen(false);
+      setNewTarget({ target: "", isPattern: false, initialCapacity: 10, initialRefillRate: 2 });
+      await loadData();
+    } catch (error) {
+      console.error("Failed to add target:", error);
+      toast.error("Failed to add adaptive target");
+    }
+  };
+
+  const handleRemoveTarget = async (target: string) => {
+    try {
+      await rateLimiterApi.removeAdaptiveTarget(target);
+      toast.success(`Removed adaptive target: ${target}`);
+      await loadData();
+    } catch (error) {
+      console.error("Failed to remove target:", error);
+      toast.error("Failed to remove adaptive target");
+    }
   };
 
   const handleSetOverride = async () => {
@@ -140,12 +177,6 @@ const Adaptive = () => {
       default:
         return <Settings className="h-4 w-4" />;
     }
-  };
-
-  const getConfidenceColor = (confidence: number) => {
-    if (confidence >= 0.8) return "text-green-600";
-    if (confidence >= 0.6) return "text-yellow-600";
-    return "text-red-600";
   };
 
   const formatEvaluationInterval = (ms: number) => {
@@ -262,11 +293,11 @@ const Adaptive = () => {
       )}
 
       {/* Stats Overview */}
-      <div className="grid gap-6 md:grid-cols-4">
+      <div className="grid gap-6 md:grid-cols-2">
         <Card className="p-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-muted-foreground">Total Keys</p>
+              <p className="text-sm text-muted-foreground">Total Managed Keys</p>
               <p className="text-3xl font-bold">{adaptiveStatuses.length}</p>
             </div>
             <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
@@ -277,33 +308,7 @@ const Adaptive = () => {
         <Card className="p-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-muted-foreground">Adaptive Mode</p>
-              <p className="text-3xl font-bold">
-                {adaptiveStatuses.filter(s => s.adaptiveStatus.mode === "ADAPTIVE").length}
-              </p>
-            </div>
-            <div className="h-12 w-12 rounded-full bg-green-500/10 flex items-center justify-center">
-              <Brain className="h-6 w-6 text-green-600" />
-            </div>
-          </div>
-        </Card>
-        <Card className="p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground">Learning Mode</p>
-              <p className="text-3xl font-bold">
-                {adaptiveStatuses.filter(s => s.adaptiveStatus.mode === "LEARNING").length}
-              </p>
-            </div>
-            <div className="h-12 w-12 rounded-full bg-blue-500/10 flex items-center justify-center">
-              <Activity className="h-6 w-6 text-blue-600" />
-            </div>
-          </div>
-        </Card>
-        <Card className="p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground">Manual Overrides</p>
+              <p className="text-sm text-muted-foreground">Manual Overrides Active</p>
               <p className="text-3xl font-bold">
                 {adaptiveStatuses.filter(s => s.adaptiveStatus.mode === "OVERRIDE").length}
               </p>
@@ -315,12 +320,123 @@ const Adaptive = () => {
         </Card>
       </div>
 
+      {/* Adaptive Target Management */}
+      <Card className="p-6">
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-lg font-semibold flex items-center gap-2">
+            <Zap className="h-5 w-5" />
+            Adaptive Targets
+          </h3>
+          <Dialog open={addTargetDialogOpen} onOpenChange={setAddTargetDialogOpen}>
+            <DialogTrigger asChild>
+              <Button className="gap-2">
+                <Plus className="h-4 w-4" />
+                Add Adaptive Key
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Add Adaptive Target</DialogTitle>
+                <DialogDescription>
+                  Define a key or pattern that should be automatically managed by the adaptive engine.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-4 py-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="target">Key or Pattern</Label>
+                  <Input
+                    id="target"
+                    placeholder={newTarget.isPattern ? "e.g. user:*" : "e.g. user:123"}
+                    value={newTarget.target}
+                    onChange={(e) => setNewTarget({ ...newTarget, target: e.target.value })}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="initialCapacity">Initial Capacity</Label>
+                    <Input
+                      id="initialCapacity"
+                      type="number"
+                      value={newTarget.initialCapacity}
+                      onChange={(e) => setNewTarget({ ...newTarget, initialCapacity: parseInt(e.target.value, 10) || 0 })}
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="initialRefillRate">Initial Refill Rate</Label>
+                    <Input
+                      id="initialRefillRate"
+                      type="number"
+                      value={newTarget.initialRefillRate}
+                      onChange={(e) => setNewTarget({ ...newTarget, initialRefillRate: parseInt(e.target.value, 10) || 0 })}
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between space-x-2 border p-3 rounded-md bg-muted/30">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="pattern-mode" className="font-semibold">Pattern Based</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Use wildcards (e.g. api:*) to match multiple keys.
+                    </p>
+                  </div>
+                  <Switch
+                    id="pattern-mode"
+                    checked={newTarget.isPattern}
+                    onCheckedChange={(checked) => setNewTarget({ ...newTarget, isPattern: checked })}
+                  />
+                </div>
+                {newTarget.isPattern && (
+                  <Alert className="py-2 px-3">
+                    <Info className="h-4 w-4" />
+                    <AlertDescription className="text-xs">
+                      Actual keys always take priority over matching patterns.
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setAddTargetDialogOpen(false)}>Cancel</Button>
+                <Button onClick={handleAddTarget} disabled={!newTarget.target}>Add Target</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
+
+        {adaptiveTargets.length === 0 ? (
+          <div className="text-center py-8 border-2 border-dashed rounded-lg">
+            <Zap className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+            <p className="text-muted-foreground">No explicit adaptive targets defined</p>
+            <p className="text-xs text-muted-foreground">The system will still learn from active traffic.</p>
+          </div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {adaptiveTargets.map((target) => (
+              <div key={target.target} className="flex items-center justify-between p-3 border rounded-lg bg-card hover:shadow-sm transition-shadow">
+                <div className="flex items-center gap-3 overflow-hidden">
+                  <div className={`p-2 rounded-full ${target.isPattern ? 'bg-purple-500/10' : 'bg-blue-500/10'}`}>
+                    {target.isPattern ? <Globe className="h-4 w-4 text-purple-600" /> : <Lock className="h-4 w-4 text-blue-600" />}
+                  </div>
+                  <div className="overflow-hidden">
+                    <p className="font-mono text-sm font-semibold truncate" title={target.target}>{target.target}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold">
+                      {target.isPattern ? 'Pattern' : 'Actual Key'}
+                    </p>
+                  </div>
+                </div>
+                <Button variant="ghost" size="icon" onClick={() => handleRemoveTarget(target.target)} className="text-muted-foreground hover:text-destructive">
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
       {/* Keys Table */}
       <Card className="p-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold flex items-center gap-2">
             <Activity className="h-5 w-5" />
-            Adaptive Keys Status
+            Active Adaptation Monitor
           </h3>
           {!isConnected && (
             <Badge variant="destructive" className="gap-1">
@@ -333,9 +449,9 @@ const Adaptive = () => {
         {adaptiveStatuses.length === 0 ? (
           <div className="text-center py-12">
             <Info className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-            <p className="text-muted-foreground mb-2">No adaptive keys found</p>
+            <p className="text-muted-foreground mb-2">No active adaptations observed</p>
             <p className="text-sm text-muted-foreground">
-              Make some rate limit requests to see adaptive status for keys.
+              Monitoring traffic and applying ML decisions...
             </p>
           </div>
         ) : (
@@ -344,139 +460,131 @@ const Adaptive = () => {
               <TableHeader>
                 <TableRow>
                   <TableHead>Key</TableHead>
-                  <TableHead>Mode</TableHead>
-                  <TableHead>Confidence</TableHead>
                   <TableHead>Current Limits</TableHead>
                   <TableHead>Reasoning</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {adaptiveStatuses.map((status) => (
-                  <TableRow key={status.key}>
-                    <TableCell className="font-mono text-sm">
-                      <div className="flex flex-col">
-                        <span className="font-semibold">{status.displayName}</span>
-                        <span className="text-[10px] text-muted-foreground truncate max-w-[150px]" title={status.key}>
-                          {status.key}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={`gap-1 ${getModeColor(status.adaptiveStatus.mode)}`}>
-                        {getModeIcon(status.adaptiveStatus.mode)}
-                        {status.adaptiveStatus.mode}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Progress
-                          value={status.adaptiveStatus.confidence * 100}
-                          className="w-16 h-2"
-                        />
-                        <span className={`text-sm font-medium ${getConfidenceColor(status.adaptiveStatus.confidence)}`}>
-                          {(status.adaptiveStatus.confidence * 100).toFixed(0)}%
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="text-sm">
-                        <div>Capacity: <span className="font-medium">{status.currentLimits.capacity}</span></div>
-                        <div>Refill: <span className="font-medium">{status.currentLimits.refillRate}/s</span></div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="max-w-xs">
-                      <div className="text-sm text-muted-foreground truncate">
-                        {Object.entries(status.adaptiveStatus.reasoning || {}).map(([key, value]) => (
-                          <div key={key} className="truncate" title={`${key}: ${value}`}>
-                            <span className="font-medium">{key}:</span> {value}
+                {adaptiveStatuses.map((status) => {
+                  const isExplicitTarget = adaptiveTargets.some(t => t.target === status.key);
+                  const isPatternMatch = !isExplicitTarget && adaptiveTargets.some(t => t.isPattern && status.key.match(new RegExp('^' + t.target.replace(/\*/g, '.*') + '$')));
+                  const isOverride = status.adaptiveStatus.mode === "OVERRIDE";
+                  
+                  return (
+                    <TableRow key={status.key}>
+                      <TableCell className="font-mono text-sm">
+                        <div className="flex flex-col">
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold">{status.displayName}</span>
+                            {isExplicitTarget && <Badge variant="outline" className="text-[9px] h-4 border-blue-500 text-blue-500">Target</Badge>}
+                            {isPatternMatch && <Badge variant="outline" className="text-[9px] h-4 border-purple-500 text-purple-500">Matched</Badge>}
+                            {isOverride && <Badge className="gap-1 bg-orange-500 text-[9px] h-4"><Shield className="h-3 w-3" />Override</Badge>}
                           </div>
-                        )).slice(0, 2)}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        {status.adaptiveStatus.mode === "OVERRIDE" ? (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleRemoveOverride(status.key)}
-                            className="gap-1"
-                          >
-                            <X className="h-3 w-3" />
-                            Remove Override
-                          </Button>
-                        ) : (
-                          <Dialog open={overrideDialogOpen && selectedKey === status.key} onOpenChange={(open) => {
-                            setOverrideDialogOpen(open);
-                            if (open) {
-                              setSelectedKey(status.key);
-                              setOverrideForm({
-                                capacity: status.currentLimits.capacity,
-                                refillRate: status.currentLimits.refillRate,
-                                reason: "",
-                              });
-                            } else {
-                              setSelectedKey(null);
-                            }
-                          }}>
-                            <DialogTrigger asChild>
-                              <Button size="sm" variant="outline" className="gap-1">
-                                <Edit3 className="h-3 w-3" />
-                                Override
-                              </Button>
-                            </DialogTrigger>
-                            <DialogContent>
-                              <DialogHeader>
-                                <DialogTitle>Set Manual Override</DialogTitle>
-                                <DialogDescription>
-                                  Override adaptive limits for key: <code className="bg-muted px-1 rounded">{status.key}</code>
-                                </DialogDescription>
-                              </DialogHeader>
-                              <div className="grid gap-4 py-4">
-                                <div className="grid gap-2">
-                                  <Label htmlFor="capacity">Capacity</Label>
-                                  <Input
-                                    id="capacity"
-                                    type="number"
-                                    value={overrideForm.capacity}
-                                    onChange={(e) => setOverrideForm({ ...overrideForm, capacity: parseInt(e.target.value, 10) || 0 })}
-                                  />
-                                </div>
-                                <div className="grid gap-2">
-                                  <Label htmlFor="refillRate">Refill Rate (per second)</Label>
-                                  <Input
-                                    id="refillRate"
-                                    type="number"
-                                    value={overrideForm.refillRate}
-                                    onChange={(e) => setOverrideForm({ ...overrideForm, refillRate: parseInt(e.target.value, 10) || 0 })}
-                                  />
-                                </div>
-                                <div className="grid gap-2">
-                                  <Label htmlFor="reason">Reason</Label>
-                                  <Textarea
-                                    id="reason"
-                                    placeholder="Enter reason for override..."
-                                    value={overrideForm.reason}
-                                    onChange={(e) => setOverrideForm({ ...overrideForm, reason: e.target.value })}
-                                  />
-                                </div>
-                              </div>
-                              <DialogFooter>
-                                <Button variant="outline" onClick={() => setOverrideDialogOpen(false)}>
-                                  Cancel
+                          <span className="text-[10px] text-muted-foreground truncate max-w-[150px]" title={status.key}>
+                            {status.key}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-sm">
+                          <div>Capacity: <span className="font-medium">{status.currentLimits.capacity}</span></div>
+                          <div>Refill: <span className="font-medium">{status.currentLimits.refillRate}/s</span></div>
+                        </div>
+                      </TableCell>
+                      <TableCell className="max-w-xs">
+                        <div className="text-sm text-muted-foreground truncate">
+                          {Object.entries(status.adaptiveStatus.reasoning || {}).map(([key, value]) => (
+                            <div key={key} className="truncate" title={`${key}: ${value}`}>
+                              <span className="font-medium">{key}:</span> {value}
+                            </div>
+                          )).slice(0, 2)}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          {status.adaptiveStatus.mode === "OVERRIDE" ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleRemoveOverride(status.key)}
+                              className="gap-1"
+                            >
+                              <X className="h-3 w-3" />
+                              Remove Override
+                            </Button>
+                          ) : (
+                            <Dialog open={overrideDialogOpen && selectedKey === status.key} onOpenChange={(open) => {
+                              setOverrideDialogOpen(open);
+                              if (open) {
+                                setSelectedKey(status.key);
+                                setOverrideForm({
+                                  capacity: status.currentLimits.capacity,
+                                  refillRate: status.currentLimits.refillRate,
+                                  reason: "",
+                                });
+                              } else {
+                                setSelectedKey(null);
+                              }
+                            }}>
+                              <DialogTrigger asChild>
+                                <Button size="sm" variant="outline" className="gap-1">
+                                  <Edit3 className="h-3 w-3" />
+                                  Override
                                 </Button>
-                                <Button onClick={handleSetOverride} disabled={!overrideForm.reason}>
-                                  Set Override
-                                </Button>
-                              </DialogFooter>
-                            </DialogContent>
-                          </Dialog>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                              </DialogTrigger>
+                              <DialogContent>
+                                <DialogHeader>
+                                  <DialogTitle>Set Manual Override</DialogTitle>
+                                  <DialogDescription>
+                                    Override adaptive limits for key: <code className="bg-muted px-1 rounded">{status.key}</code>
+                                  </DialogDescription>
+                                </DialogHeader>
+                                <div className="grid gap-4 py-4">
+                                  <div className="grid gap-2">
+                                    <Label htmlFor="capacity">Capacity</Label>
+                                    <Input
+                                      id="capacity"
+                                      type="number"
+                                      value={overrideForm.capacity}
+                                      onChange={(e) => setOverrideForm({ ...overrideForm, capacity: parseInt(e.target.value, 10) || 0 })}
+                                    />
+                                  </div>
+                                  <div className="grid gap-2">
+                                    <Label htmlFor="refillRate">Refill Rate (per second)</Label>
+                                    <Input
+                                      id="refillRate"
+                                      type="number"
+                                      value={overrideForm.refillRate}
+                                      onChange={(e) => setOverrideForm({ ...overrideForm, refillRate: parseInt(e.target.value, 10) || 0 })}
+                                    />
+                                  </div>
+                                  <div className="grid gap-2">
+                                    <Label htmlFor="reason">Reason</Label>
+                                    <Textarea
+                                      id="reason"
+                                      placeholder="Enter reason for override..."
+                                      value={overrideForm.reason}
+                                      onChange={(e) => setOverrideForm({ ...overrideForm, reason: e.target.value })}
+                                    />
+                                  </div>
+                                </div>
+                                <DialogFooter>
+                                  <Button variant="outline" onClick={() => setOverrideDialogOpen(false)}>
+                                    Cancel
+                                  </Button>
+                                  <Button onClick={handleSetOverride} disabled={!overrideForm.reason}>
+                                    Set Override
+                                  </Button>
+                                </DialogFooter>
+                              </DialogContent>
+                            </Dialog>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
@@ -487,43 +595,31 @@ const Adaptive = () => {
       <Card className="p-6 bg-gradient-to-br from-card to-muted/30">
         <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
           <Info className="h-5 w-5" />
-          Understanding Adaptive Modes
+          System Information
         </h3>
-        <div className="grid gap-4 md:grid-cols-4">
-          <div className="flex items-start gap-3">
-            <div className="h-8 w-8 rounded-full bg-gray-500/20 flex items-center justify-center flex-shrink-0">
-              <Settings className="h-4 w-4 text-gray-500" />
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="flex items-start gap-3 border p-4 rounded-lg bg-background/50">
+            <div className="h-10 w-10 rounded-full bg-green-500/20 flex items-center justify-center flex-shrink-0">
+              <Brain className="h-5 w-5 text-green-600" />
             </div>
             <div>
-              <p className="font-medium">STATIC</p>
-              <p className="text-sm text-muted-foreground">Using default static configuration</p>
+              <p className="font-semibold">Automatic AIMD Policy</p>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                All managed keys are subject to the <strong>Additive Increase / Multiplicative Decrease</strong> policy. 
+                Limits grow gradually when the system is healthy and are reduced instantly during stress.
+              </p>
             </div>
           </div>
-          <div className="flex items-start gap-3">
-            <div className="h-8 w-8 rounded-full bg-blue-500/20 flex items-center justify-center flex-shrink-0">
-              <Activity className="h-4 w-4 text-blue-500" />
+          <div className="flex items-start gap-3 border p-4 rounded-lg bg-background/50">
+            <div className="h-10 w-10 rounded-full bg-orange-500/20 flex items-center justify-center flex-shrink-0">
+              <Shield className="h-5 w-5 text-orange-600" />
             </div>
             <div>
-              <p className="font-medium">LEARNING</p>
-              <p className="text-sm text-muted-foreground">Collecting traffic patterns and system metrics</p>
-            </div>
-          </div>
-          <div className="flex items-start gap-3">
-            <div className="h-8 w-8 rounded-full bg-green-500/20 flex items-center justify-center flex-shrink-0">
-              <Brain className="h-4 w-4 text-green-500" />
-            </div>
-            <div>
-              <p className="font-medium">ADAPTIVE</p>
-              <p className="text-sm text-muted-foreground">Actively adjusting limits based on ML analysis</p>
-            </div>
-          </div>
-          <div className="flex items-start gap-3">
-            <div className="h-8 w-8 rounded-full bg-orange-500/20 flex items-center justify-center flex-shrink-0">
-              <Shield className="h-4 w-4 text-orange-500" />
-            </div>
-            <div>
-              <p className="font-medium">OVERRIDE</p>
-              <p className="text-sm text-muted-foreground">Manual override by administrator</p>
+              <p className="font-semibold">Manual Overrides</p>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                Admins can manually set specific limits for a key. This pauses the automatic AIMD 
+                adjustments for that key until the override is removed.
+              </p>
             </div>
           </div>
         </div>

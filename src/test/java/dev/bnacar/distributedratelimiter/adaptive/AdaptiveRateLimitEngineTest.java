@@ -2,6 +2,7 @@ package dev.bnacar.distributedratelimiter.adaptive;
 
 import dev.bnacar.distributedratelimiter.ratelimit.ConfigurationResolver;
 import dev.bnacar.distributedratelimiter.ratelimit.RateLimitConfig;
+import dev.bnacar.distributedratelimiter.ratelimit.RateLimiterService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -29,6 +30,9 @@ class AdaptiveRateLimitEngineTest {
     @Mock
     private ConfigurationResolver configurationResolver;
 
+    @Mock
+    private RateLimiterService rateLimiterService;
+
     private AdaptiveRateLimitEngine engine;
 
     @BeforeEach
@@ -38,6 +42,7 @@ class AdaptiveRateLimitEngineTest {
             userMetricsModeler,
             adaptiveModel,
             configurationResolver,
+            rateLimiterService,
             true,        // enabled
             300000L,     // evaluation interval
             0.7,         // min confidence
@@ -64,6 +69,7 @@ class AdaptiveRateLimitEngineTest {
             userMetricsModeler,
             adaptiveModel,
             configurationResolver,
+            rateLimiterService,
             false,       // disabled
             300000L,
             0.7,
@@ -172,6 +178,7 @@ class AdaptiveRateLimitEngineTest {
             userMetricsModeler,
             adaptiveModel,
             configurationResolver,
+            rateLimiterService,
             false,       // disabled
             300000L,
             0.7,
@@ -185,6 +192,38 @@ class AdaptiveRateLimitEngineTest {
 
         // Assert
         verifyNoInteractions(metricsCollector, userMetricsModeler, adaptiveModel);
+    }
+
+    @Test
+    void testAddAdaptiveTarget() {
+        // Arrange
+        String target = "user:123";
+        when(configurationResolver.getBaseConfig(target)).thenReturn(null);
+
+        // Act
+        engine.addAdaptiveTarget(target, false);
+
+        // Assert
+        assertTrue(engine.getAdaptiveTargets().containsKey(target));
+        verify(configurationResolver).updateKeyConfig(eq(target), any(RateLimitConfig.class));
+        verify(rateLimiterService).clearBuckets();
+    }
+
+    @Test
+    void testRemoveAdaptiveTarget() {
+        // Arrange
+        String target = "user:123";
+        // Reset mock to clear interactions from setup or previous calls
+        reset(rateLimiterService);
+        
+        engine.addAdaptiveTarget(target, false);
+
+        // Act
+        engine.removeAdaptiveTarget(target);
+
+        // Assert
+        assertFalse(engine.getAdaptiveTargets().containsKey(target));
+        verify(rateLimiterService, times(2)).clearBuckets(); // once for add, once for remove
     }
 
     @Test

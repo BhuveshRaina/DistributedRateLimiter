@@ -2,6 +2,7 @@ package dev.bnacar.distributedratelimiter.adaptive;
 
 import dev.bnacar.distributedratelimiter.ratelimit.ConfigurationResolver;
 import dev.bnacar.distributedratelimiter.ratelimit.RateLimitConfig;
+import dev.bnacar.distributedratelimiter.ratelimit.RateLimiterService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -27,10 +28,14 @@ public class AdaptiveRateLimitEngine {
     private final UserMetricsModeler userMetricsModeler;
     private final AdaptiveMLModel adaptiveModel;
     private final ConfigurationResolver configurationResolver;
+    private final RateLimiterService rateLimiterService;
     
     // Store adaptive configurations and overrides
     private final Map<String, AdaptedLimits> adaptedLimits = new ConcurrentHashMap<>();
     private final Map<String, AdaptationOverride> manualOverrides = new ConcurrentHashMap<>();
+    
+    // Explicit adaptive targets
+    private final Map<String, AdaptiveTarget> adaptiveTargets = new ConcurrentHashMap<>();
     
     // Track active keys that need evaluation
     private final Set<String> trackedKeys = ConcurrentHashMap.newKeySet();
@@ -48,6 +53,7 @@ public class AdaptiveRateLimitEngine {
             UserMetricsModeler userMetricsModeler,
             AdaptiveMLModel adaptiveModel,
             @Lazy ConfigurationResolver configurationResolver,
+            @Lazy RateLimiterService rateLimiterService,
             @Value("${ratelimiter.adaptive.enabled:true}") boolean enabled,
             @Value("${ratelimiter.adaptive.evaluation-interval-ms:300000}") long evaluationIntervalMs,
             @Value("${ratelimiter.adaptive.min-confidence-threshold:0.7}") double minConfidenceThreshold,
@@ -59,6 +65,7 @@ public class AdaptiveRateLimitEngine {
         this.userMetricsModeler = userMetricsModeler;
         this.adaptiveModel = adaptiveModel;
         this.configurationResolver = configurationResolver;
+        this.rateLimiterService = rateLimiterService;
         this.enabled = enabled;
         this.evaluationIntervalMs = evaluationIntervalMs;
         this.minConfidenceThreshold = minConfidenceThreshold;
@@ -89,6 +96,15 @@ public class AdaptiveRateLimitEngine {
         int adaptedCount = 0;
         for (String key : activeKeys) {
             try {
+                // Check priority: if a key matches multiple targets, 
+                // actual key based target has higher priority than pattern based.
+                // For now, we evaluate all active keys and the generation logic 
+                // can decide if it should adapt based on targets.
+                
+                if (!shouldEvaluate(key)) {
+                    continue;
+                }
+
                 AdaptationDecision decision = generateAdaptationDecision(key);
                 
                 if (decision.shouldAdapt() && decision.getConfidence() >= minConfidenceThreshold) {
@@ -103,6 +119,26 @@ public class AdaptiveRateLimitEngine {
         if (adaptedCount > 0) {
             logger.info("Adaptive evaluation completed - adapted {} keys", adaptedCount);
         }
+    }
+
+    /**
+     * Check if a key should be evaluated based on adaptive targets.
+     */
+    private boolean shouldEvaluate(String key) {
+        // If it's explicitly tracked, evaluate it
+        if (adaptiveTargets.containsKey(key)) {
+            return true;
+        }
+
+        // Check patterns with lower priority
+        for (Map.Entry<String, AdaptiveTarget> entry : adaptiveTargets.entrySet()) {
+            if (entry.getValue().isPattern() && key.matches(entry.getKey().replace("*", ".*"))) {
+                return true;
+            }
+        }
+
+        // Fallback to tracked keys if no explicit targets are defined or if we want to learn anyway
+        return trackedKeys.contains(key);
     }
     
     /**
@@ -119,17 +155,26 @@ public class AdaptiveRateLimitEngine {
                 .build();
         }
         
-        // Get current configuration
-        RateLimitConfig currentConfig = configurationResolver.getBaseConfig(key);
+        // Use current adapted limits if present as the base for next adaptation (cumulative AIMD)
+        AdaptedLimits currentAdapted = adaptedLimits.get(key);
+        int baseCapacity;
+        int baseRefillRate;
+        
+        if (currentAdapted != null) {
+            baseCapacity = currentAdapted.adaptedCapacity;
+            baseRefillRate = currentAdapted.adaptedRefillRate;
+        } else {
+            RateLimitConfig baseConfig = configurationResolver.getBaseConfig(key);
+            baseCapacity = baseConfig.getCapacity();
+            baseRefillRate = baseConfig.getRefillRate();
+        }
         
         // Collect signals
         SystemHealth health = metricsCollector.getCurrentHealth();
         UserMetrics userMetrics = userMetricsModeler.getUserMetrics(key);
         
-        // Use ML model to generate decision
-        return adaptiveModel.predict(health, userMetrics, 
-                                     currentConfig.getCapacity(), 
-                                     currentConfig.getRefillRate());
+        // Use ML model to generate decision based on CURRENT limits
+        return adaptiveModel.predict(health, userMetrics, baseCapacity, baseRefillRate);
     }
     
     /**
@@ -186,6 +231,7 @@ public class AdaptiveRateLimitEngine {
         keys.addAll(trackedKeys);
         keys.addAll(adaptedLimits.keySet());
         keys.addAll(manualOverrides.keySet());
+        keys.addAll(adaptiveTargets.keySet());
         return keys;
     }
     
@@ -215,14 +261,16 @@ public class AdaptiveRateLimitEngine {
         if (adapted == null) {
             RateLimitConfig config = configurationResolver.getBaseConfig(key);
             
-            if (trackedKeys.contains(key)) {
+            // Any key that is targeted or has active traffic (tracked) is now considered in ADAPTIVE mode
+            // because it is subject to the AIMD policy evaluations immediately.
+            if (isTargeted(key) || trackedKeys.contains(key)) {
                 Map<String, String> reasoning = new HashMap<>();
-                reasoning.put("decision", "Collecting metrics");
-                reasoning.put("status", "Learning in progress");
+                reasoning.put("decision", "Monitoring active");
+                reasoning.put("status", "Subject to AIMD policy");
                 
                 return new AdaptiveStatusInfo(
-                    "LEARNING",
-                    0.3,
+                    "ADAPTIVE",
+                    1.0,
                     config.getCapacity(),
                     config.getRefillRate(),
                     config.getCapacity(),
@@ -253,6 +301,16 @@ public class AdaptiveRateLimitEngine {
         );
     }
 
+    private boolean isTargeted(String key) {
+        if (adaptiveTargets.containsKey(key)) return true;
+        for (Map.Entry<String, AdaptiveTarget> entry : adaptiveTargets.entrySet()) {
+            if (entry.getValue().isPattern() && key.matches(entry.getKey().replace("*", ".*"))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Get adaptive status for all tracked keys.
      */
@@ -280,6 +338,79 @@ public class AdaptiveRateLimitEngine {
     public void removeOverride(String key) {
         manualOverrides.remove(key);
         logger.info("Manual override removed for key: {}", key);
+    }
+
+    /**
+     * Add adaptive target with initial configuration.
+     */
+    public void addAdaptiveTarget(String target, boolean isPattern, Integer capacity, Integer refillRate) {
+        adaptiveTargets.put(target, new AdaptiveTarget(target, isPattern));
+        
+        // Clear any existing adapted limits to force a reset to the new base configuration
+        adaptedLimits.remove(target);
+        
+        // Initial values: use provided or system defaults
+        int finalCapacity = (capacity != null) ? capacity : configurationResolver.getBaseConfig(target).getCapacity();
+        int finalRefillRate = (refillRate != null) ? refillRate : configurationResolver.getBaseConfig(target).getRefillRate();
+        
+        // Always register/update in configuration to ensure it shows up in the config page
+        if (isPattern) {
+            // If it's a pattern, explicitly remove from keys to avoid showing in per-key section
+            configurationResolver.removeKeyConfig(target);
+            configurationResolver.updatePatternConfig(target, new RateLimitConfig(finalCapacity, finalRefillRate));
+        } else {
+            // If it's a key, explicitly remove from patterns to avoid showing in pattern section
+            configurationResolver.removePatternConfig(target);
+            configurationResolver.updateKeyConfig(target, new RateLimitConfig(finalCapacity, finalRefillRate));
+        }
+        
+        // Clear buckets and cache to ensure new config/target takes effect immediately
+        configurationResolver.clearCache();
+        if (rateLimiterService != null) {
+            rateLimiterService.clearBuckets();
+        }
+        
+        logger.info("Added/Updated adaptive target: {} (pattern: {}, baseCapacity: {}, baseRefillRate: {})", 
+                   target, isPattern, finalCapacity, finalRefillRate);
+    }
+    
+    /**
+     * Overloaded method for backward compatibility.
+     */
+    public void addAdaptiveTarget(String target, boolean isPattern) {
+        addAdaptiveTarget(target, isPattern, null, null);
+    }
+
+    /**
+     * Remove adaptive target.
+     */
+    public void removeAdaptiveTarget(String target) {
+        AdaptiveTarget targetObj = adaptiveTargets.remove(target);
+        adaptedLimits.remove(target);
+        trackedKeys.remove(target);
+        
+        // Also remove configuration override if it was created as part of addAdaptiveTarget
+        if (targetObj != null) {
+            if (targetObj.isPattern()) {
+                configurationResolver.removePatternConfig(target);
+            } else {
+                configurationResolver.removeKeyConfig(target);
+            }
+        }
+        
+        // Clear buckets to ensure it reverts to standard configuration
+        if (rateLimiterService != null) {
+            rateLimiterService.clearBuckets();
+        }
+        
+        logger.info("Removed adaptive target: {}", target);
+    }
+
+    /**
+     * Get all adaptive targets.
+     */
+    public Map<String, AdaptiveTarget> getAdaptiveTargets() {
+        return adaptiveTargets;
     }
     
     /**
@@ -378,5 +509,21 @@ public class AdaptiveRateLimitEngine {
             this.refillRate = refillRate;
             this.reason = reason;
         }
+    }
+
+    /**
+     * Adaptive target configuration.
+     */
+    public static class AdaptiveTarget {
+        private final String target;
+        private final boolean isPattern;
+
+        public AdaptiveTarget(String target, boolean isPattern) {
+            this.target = target;
+            this.isPattern = isPattern;
+        }
+
+        public String getTarget() { return target; }
+        public boolean isPattern() { return isPattern; }
     }
 }

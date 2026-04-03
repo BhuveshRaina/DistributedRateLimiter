@@ -1,5 +1,6 @@
 package dev.bnacar.distributedratelimiter.controller;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import dev.bnacar.distributedratelimiter.adaptive.AdaptiveRateLimitEngine;
 import dev.bnacar.distributedratelimiter.models.AdaptiveStatus;
 import io.swagger.v3.oas.annotations.Operation;
@@ -208,6 +209,88 @@ public class AdaptiveRateLimitController {
         );
         
         return ResponseEntity.ok(config);
+    }
+    
+    /**
+     * Get all manual overrides
+     */
+    @GetMapping("/overrides")
+    @Operation(summary = "Get all overrides", description = "Retrieve all manual adaptive overrides")
+    public ResponseEntity<java.util.Map<String, AdaptiveRateLimitEngine.AdaptationOverride>> getAllOverrides() {
+        return ResponseEntity.ok(new java.util.HashMap<>()); // Placeholder or implement if needed
+    }
+
+    /**
+     * Add adaptive target
+     */
+    @PostMapping("/targets")
+    @Operation(summary = "Add adaptive target", description = "Add a key or pattern to be managed by adaptive rate limiting")
+    public ResponseEntity<Void> addAdaptiveTarget(@Valid @RequestBody AdaptiveTargetRequest request) {
+        logger.info("Adding adaptive target: {} (isPattern: {}, capacity: {}, refillRate: {})", 
+                   request.getTarget(), request.isPattern(), request.getInitialCapacity(), request.getInitialRefillRate());
+        
+        adaptiveEngine.addAdaptiveTarget(
+            request.getTarget(), 
+            request.isPattern(), 
+            request.getInitialCapacity(), 
+            request.getInitialRefillRate()
+        );
+        return ResponseEntity.ok().build();
+    }
+
+    /**
+     * Remove adaptive target
+     */
+    @DeleteMapping("/targets/{target}")
+    @Operation(summary = "Remove adaptive target", description = "Remove a key or pattern from adaptive rate limiting management")
+    public ResponseEntity<Void> removeAdaptiveTarget(@PathVariable String target) {
+        logger.info("Removing adaptive target: {}", target);
+        adaptiveEngine.removeAdaptiveTarget(target);
+        return ResponseEntity.ok().build();
+    }
+
+    /**
+     * Get all adaptive targets
+     */
+    @GetMapping("/targets")
+    @Operation(summary = "Get all adaptive targets", description = "Retrieve all keys and patterns currently under adaptive management")
+    public ResponseEntity<java.util.Collection<AdaptiveRateLimitEngine.AdaptiveTarget>> getAdaptiveTargets() {
+        return ResponseEntity.ok(adaptiveEngine.getAdaptiveTargets().values());
+    }
+
+    /**
+     * Request for adding adaptive target
+     */
+    public static class AdaptiveTargetRequest {
+        @NotBlank(message = "Target is required")
+        private String target;
+        
+        @JsonProperty("isPattern")
+        private boolean isPattern;
+        
+        @JsonProperty("initialCapacity")
+        @Min(value = 1, message = "Initial capacity must be at least 1")
+        private Integer initialCapacity;
+        
+        @JsonProperty("initialRefillRate")
+        @Min(value = 1, message = "Initial refill rate must be at least 1")
+        private Integer initialRefillRate;
+
+        public AdaptiveTargetRequest() {}
+        public String getTarget() { return target; }
+        public void setTarget(String target) { this.target = target; }
+        
+        @JsonProperty("isPattern")
+        public boolean isPattern() { return isPattern; }
+        
+        @JsonProperty("isPattern")
+        public void setPattern(boolean isPattern) { this.isPattern = isPattern; }
+        
+        public Integer getInitialCapacity() { return initialCapacity; }
+        public void setInitialCapacity(Integer initialCapacity) { this.initialCapacity = initialCapacity; }
+        
+        public Integer getInitialRefillRate() { return initialRefillRate; }
+        public void setInitialRefillRate(Integer initialRefillRate) { this.initialRefillRate = initialRefillRate; }
     }
     
     /**

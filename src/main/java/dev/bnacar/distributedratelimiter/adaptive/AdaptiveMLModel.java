@@ -39,7 +39,8 @@ public class AdaptiveMLModel {
     }
     
     /**
-     * Make rule-based decision focusing on System Health and User Metrics.
+     * Make rule-based decision focusing on System Health and User Metrics using AIMD principle.
+     * AIMD: Additive Increase / Multiplicative Decrease
      */
     private DecisionOutput makeRuleBasedDecision(SystemHealth health, 
                                                  UserMetrics userMetrics,
@@ -49,51 +50,50 @@ public class AdaptiveMLModel {
         DecisionOutput output = new DecisionOutput();
         output.capacity = currentCapacity;
         output.refillRate = currentRefillRate;
-        output.confidence = 0.7;
+        output.confidence = 1.0; 
         output.shouldAdapt = false;
         
-        // Rule 1: System under heavy stress - aggressive reduction
+        // --- 1. MULTIPLICATIVE DECREASE (MD) ---
+        // Triggered ONLY by System Stress to protect infrastructure.
+        
+        // CRITICAL STRESS: CPU > 80% or Latency > 1s
         if (health.getCpuUtilization() > 0.8 || health.getResponseTimeP95() > 1000) {
             output.shouldAdapt = true;
-            output.capacity = (int) (currentCapacity * 0.5);
-            output.refillRate = (int) (currentRefillRate * 0.5);
-            output.confidence = 0.95;
-            output.reason = "System under heavy stress (CPU > 80% or P95 > 1s)";
+            output.capacity = Math.max(10, (int) (currentCapacity * 0.5)); // 50% cut
+            output.refillRate = Math.max(2, (int) (currentRefillRate * 0.5));
+            output.reason = "CRITICAL: System stress detected (CPU/Latency) - Multiplicative Decrease Applied (-50%)";
             return output;
         }
 
-        // Rule 2: High denial rate for user - likely hitting limits too hard, reduce further to protect system
-        if (userMetrics.getDenialRate() > 0.3) {
+        // MODERATE STRESS: CPU > 60% 
+        if (health.getCpuUtilization() > 0.6) {
             output.shouldAdapt = true;
-            output.capacity = (int) (currentCapacity * 0.7);
-            output.refillRate = (int) (currentRefillRate * 0.7);
-            output.confidence = 0.85;
-            output.reason = "High user denial rate (> 30%)";
+            output.capacity = Math.max(10, (int) (currentCapacity * 0.8)); // 20% cut
+            output.refillRate = Math.max(2, (int) (currentRefillRate * 0.8));
+            output.reason = "NOTICE: Moderate system stress detected - Multiplicative Decrease Applied (-20%)";
             return output;
         }
         
-        // Rule 3: System under moderate stress or user rate very high - moderate reduction
-        if (health.getCpuUtilization() > 0.6 || userMetrics.getCurrentRequestRate() > currentRefillRate * 2) {
+        // --- 2. ADDITIVE INCREASE (AI) ---
+        // Triggered when System is Healthy to maximize throughput and meet user demand.
+        
+        // HEALTHY: CPU < 40% and low Error Rate
+        if (health.getCpuUtilization() < 0.4 && health.getErrorRate() < 0.01) {
             output.shouldAdapt = true;
-            output.capacity = (int) (currentCapacity * 0.8);
-            output.refillRate = (int) (currentRefillRate * 0.8);
-            output.confidence = 0.8;
-            output.reason = "Moderate system stress or excessive user request rate";
+            output.capacity = currentCapacity + 10; // Fixed Additive Increase
+            output.refillRate = currentRefillRate + 2;
+            
+            // Context-aware reasoning
+            if (userMetrics.getDenialRate() > 0.05) {
+                output.reason = "HEALTHY: System has headroom and user is hitting limits - Additive Increase Applied to meet demand";
+            } else {
+                output.reason = "HEALTHY: System stable - Additive Increase Applied to probe capacity";
+            }
             return output;
         }
         
-        // Rule 4: System has high capacity and user is stable - increase limits
-        if (health.getCpuUtilization() < 0.3 && health.getErrorRate() < 0.001 && userMetrics.getDenialRate() < 0.05) {
-            output.shouldAdapt = true;
-            output.capacity = (int) (currentCapacity * 1.2);
-            output.refillRate = (int) (currentRefillRate * 1.2);
-            output.confidence = 0.8;
-            output.reason = "System has high capacity and low user denial rate";
-            return output;
-        }
-        
-        // No adaptation needed
-        output.reason = "System and user metrics stable, no adaptation needed";
+        // --- 3. STABLE ---
+        output.reason = "STABLE: System metrics within normal range, maintaining current limits";
         return output;
     }
     

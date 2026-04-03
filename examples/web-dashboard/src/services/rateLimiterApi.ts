@@ -386,6 +386,30 @@ class RateLimiterApiService {
       return [];
     }
   }
+
+  // ============ ADAPTIVE TARGETS ============
+  
+  async getAdaptiveTargets(): Promise<{ target: string; isPattern: boolean }[]> {
+    return this.request<{ target: string; isPattern: boolean }[]>('/api/ratelimit/adaptive/targets');
+  }
+
+  async addAdaptiveTarget(request: { 
+    target: string; 
+    isPattern: boolean;
+    initialCapacity?: number;
+    initialRefillRate?: number;
+  }): Promise<void> {
+    await this.request('/api/ratelimit/adaptive/targets', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+  }
+
+  async removeAdaptiveTarget(target: string): Promise<void> {
+    await this.request(`/api/ratelimit/adaptive/targets/${encodeURIComponent(target)}`, {
+      method: 'DELETE',
+    });
+  }
 }
 
 // Import schedule types
