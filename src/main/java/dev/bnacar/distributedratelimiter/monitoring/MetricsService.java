@@ -47,28 +47,17 @@ public class MetricsService {
 
 
     // These global totals will be primarily managed in Redis, but kept in-memory copies for faster dashboard reads.
-
     private final AtomicLong totalAllowedRequests = new AtomicLong(0);
-
     private final AtomicLong totalDeniedRequests = new AtomicLong(0);
-
     private final AtomicLong totalProcessingTimeMs = new AtomicLong(0);
 
-    private final AtomicLong totalBucketCreations = new AtomicLong(0);
-
-    private final AtomicLong totalBucketCleanups = new AtomicLong(0);
-
-
-
-    // Algorithm metrics are updated frequently, so keep in-memory for speed and then convert for Redis storage/retrieval if needed.
-
-    // For now, let's keep them in memory.
+    // Algorithm metrics are updated frequently, so keep in-memory for speed
     private final Map<RateLimitAlgorithm, AlgorithmMetricsData> algoMetrics = new ConcurrentHashMap<>();
 
     // Key metrics for individual keys
     private final Map<String, KeyMetricsData> keyMetrics = new ConcurrentHashMap<>();
     
-    // Recent events for activity feed (in-memory cache for dashboard)
+    // Recent events for activity feed
     private final ConcurrentLinkedDeque<MetricsResponse.RateLimitEvent> recentEvents = new ConcurrentLinkedDeque<>();
 
     private final RedisTemplate<String, Object> redisTemplate;
@@ -76,12 +65,11 @@ public class MetricsService {
     // Cache for aggregated metrics to avoid Redis pressure
     private volatile MetricsResponse cachedMetrics;
     private volatile long lastCacheTime = 0;
-    private static final long CACHE_DURATION_MS = 100; // 100ms cache for better real-time responsiveness
+    private static final long CACHE_DURATION_MS = 100;
 
-    @Value("${ratelimiter.metrics.active-key-ttl-seconds:300}") // Default to 5 minutes
+    @Value("${ratelimiter.metrics.active-key-ttl-seconds:300}")
     private long activeKeyTtlSeconds;
 
-    // Use this for Redis health check
     private final RedisConnectionFactory redisConnectionFactory;
     private volatile boolean redisConnected = false;
     private ScheduledExecutorService healthCheckExecutor;
@@ -109,7 +97,6 @@ public class MetricsService {
         this.redisTemplate = redisTemplate;
         this.redisConnectionFactory = redisConnectionFactory;
         
-        // Initialize algorithm metrics maps
         for (RateLimitAlgorithm algo : RateLimitAlgorithm.values()) {
             algoMetrics.put(algo, new AlgorithmMetricsData());
         }
@@ -117,7 +104,6 @@ public class MetricsService {
 
     @PostConstruct
     public void initialize() {
-        // Load initial global metrics from Redis
         loadGlobalMetricsFromRedis();
         
         healthCheckExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -126,7 +112,6 @@ public class MetricsService {
             return t;
         });
         
-        // Check Redis health every 30 seconds
         healthCheckExecutor.scheduleWithFixedDelay(this::checkRedisHealth, 0, 30, TimeUnit.SECONDS);
     }
 
@@ -136,8 +121,6 @@ public class MetricsService {
             totalAllowedRequests.set(getLongValue(globalData.get("totalAllowedRequests")));
             totalDeniedRequests.set(getLongValue(globalData.get("totalDeniedRequests")));
             totalProcessingTimeMs.set(getLongValue(globalData.get("totalProcessingTimeMs")));
-            totalBucketCreations.set(getLongValue(globalData.get("totalBucketCreations")));
-            totalBucketCleanups.set(getLongValue(globalData.get("totalBucketCleanups")));
         }
         logger.info("Loaded global metrics from Redis. Allowed: {}, Denied: {}", totalAllowedRequests.get(), totalDeniedRequests.get());
     }
@@ -169,25 +152,22 @@ public class MetricsService {
                 }
                 setRedisConnected(false);
             }
-        } else {
-            logger.debug("Redis connection factory not available");
         }
+    }
+
+    public void setRedisConnected(boolean connected) {
+        this.redisConnected = connected;
+    }
+
+    public boolean isRedisConnected() {
+        return redisConnected;
     }
 
     @PreDestroy
     public void shutdown() {
         if (healthCheckExecutor != null) {
             healthCheckExecutor.shutdown();
-            try {
-                if (!healthCheckExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
-                    healthCheckExecutor.shutdownNow();
-                }
-            } catch (InterruptedException e) {
-                healthCheckExecutor.shutdownNow();
-                Thread.currentThread().interrupt();
-            }
         }
-        // Save final global metrics to Redis on shutdown
         saveGlobalMetricsToRedis();
         logger.info("MetricsService shutdown. Final global metrics saved to Redis.");
     }
@@ -197,8 +177,6 @@ public class MetricsService {
         globalData.put("totalAllowedRequests", String.valueOf(totalAllowedRequests.get()));
         globalData.put("totalDeniedRequests", String.valueOf(totalDeniedRequests.get()));
         globalData.put("totalProcessingTimeMs", String.valueOf(totalProcessingTimeMs.get()));
-        globalData.put("totalBucketCreations", String.valueOf(totalBucketCreations.get()));
-        globalData.put("totalBucketCleanups", String.valueOf(totalBucketCleanups.get()));
         redisTemplate.opsForHash().putAll(GLOBAL_METRICS_KEY, globalData);
     }
 
@@ -209,20 +187,16 @@ public class MetricsService {
     public void recordAllowedRequest(String key, RateLimitAlgorithm algorithm, int tokens) {
         String keyMetricsHash = KEY_METRICS_PREFIX + key;
         
-        // Update key-specific metrics in Redis Hash
         redisTemplate.opsForHash().increment(keyMetricsHash, "allowedRequests", 1);
         redisTemplate.opsForHash().put(keyMetricsHash, "lastAccessTime", String.valueOf(System.currentTimeMillis()));
 
-        // Update local key metrics for this instance
         KeyMetricsData data = keyMetrics.computeIfAbsent(key, k -> new KeyMetricsData());
         data.allowedRequests.incrementAndGet();
         data.updateAccessTime();
 
-        // Update global totals (in Redis and in-memory copy)
         redisTemplate.opsForHash().increment(GLOBAL_METRICS_KEY, "totalAllowedRequests", 1);
         totalAllowedRequests.incrementAndGet(); 
         
-        // Update algorithm-specific metrics in Redis and local cache
         if (algorithm != null) {
             String algoKey = ALGORITHM_METRICS_PREFIX + algorithm.name();
             redisTemplate.opsForHash().increment(algoKey, "allowedRequests", 1);
@@ -231,13 +205,8 @@ public class MetricsService {
             if (algoData != null) algoData.allowedRequests.incrementAndGet();
         }
         
-        // Mark key as active and set TTL for active status in Redis
         redisTemplate.opsForValue().set(ACTIVE_KEYS_PREFIX + key, "true", Duration.ofSeconds(activeKeyTtlSeconds));
-
         recordEvent(key, algorithm, true, tokens);
-        
-        logger.debug("Recorded allowed request for key={}, algorithm={}, total_allowed={}", 
-                key, algorithm, totalAllowedRequests.get());
     }
 
     public void recordDeniedRequest(String key, RateLimitAlgorithm algorithm) {
@@ -247,20 +216,16 @@ public class MetricsService {
     public void recordDeniedRequest(String key, RateLimitAlgorithm algorithm, int tokens) {
         String keyMetricsHash = KEY_METRICS_PREFIX + key;
 
-        // Update key-specific metrics in Redis Hash
         redisTemplate.opsForHash().increment(keyMetricsHash, "deniedRequests", 1);
         redisTemplate.opsForHash().put(keyMetricsHash, "lastAccessTime", String.valueOf(System.currentTimeMillis()));
 
-        // Update local key metrics
         KeyMetricsData data = keyMetrics.computeIfAbsent(key, k -> new KeyMetricsData());
         data.deniedRequests.incrementAndGet();
         data.updateAccessTime();
 
-        // Update global totals (in Redis and in-memory copy)
         redisTemplate.opsForHash().increment(GLOBAL_METRICS_KEY, "totalDeniedRequests", 1);
         totalDeniedRequests.incrementAndGet(); 
 
-        // Update algorithm-specific metrics in Redis and local cache
         if (algorithm != null) {
             String algoKey = ALGORITHM_METRICS_PREFIX + algorithm.name();
             redisTemplate.opsForHash().increment(algoKey, "deniedRequests", 1);
@@ -269,13 +234,8 @@ public class MetricsService {
             if (algoData != null) algoData.deniedRequests.incrementAndGet();
         }
         
-        // Mark key as active and set TTL
         redisTemplate.opsForValue().set(ACTIVE_KEYS_PREFIX + key, "true", Duration.ofSeconds(activeKeyTtlSeconds));
-
         recordEvent(key, algorithm, false, tokens);
-        
-        logger.info("Recorded denied request for key={}, algorithm={}, total_denied={}, denied_ratio={}%", 
-                key, algorithm, totalDeniedRequests.get(), calculateDeniedRatio());
     }
 
     private void recordEvent(String key, RateLimitAlgorithm algorithm, boolean allowed, int tokens) {
@@ -284,16 +244,14 @@ public class MetricsService {
             id, System.currentTimeMillis(), key, algorithm != null ? algorithm.name() : "UNKNOWN", allowed, tokens
         );
         
-        // Store in local deque for fast access
         recentEvents.addFirst(event);
         if (recentEvents.size() > MAX_RECENT_EVENTS) {
             recentEvents.removeLast();
         }
         
-        // Store recent events in a Redis List (capped)
         try {
             redisTemplate.opsForList().leftPush(RECENT_EVENTS_LIST, objectMapper.writeValueAsString(event));
-            redisTemplate.opsForList().trim(RECENT_EVENTS_LIST, 0, MAX_RECENT_EVENTS - 1); // Cap the list
+            redisTemplate.opsForList().trim(RECENT_EVENTS_LIST, 0, MAX_RECENT_EVENTS - 1);
         } catch (JsonProcessingException e) {
             logger.error("Error serializing RateLimitEvent to JSON: {}", e.getMessage());
         }
@@ -303,22 +261,11 @@ public class MetricsService {
         String keyMetricsHash = KEY_METRICS_PREFIX + key;
         redisTemplate.opsForHash().increment(keyMetricsHash, "bucketCreations", 1);
         redisTemplate.opsForHash().put(keyMetricsHash, "lastAccessTime", String.valueOf(System.currentTimeMillis()));
-
-        redisTemplate.opsForHash().increment(GLOBAL_METRICS_KEY, "totalBucketCreations", 1);
-        totalBucketCreations.incrementAndGet(); 
-
         redisTemplate.opsForValue().set(ACTIVE_KEYS_PREFIX + key, "true", Duration.ofSeconds(activeKeyTtlSeconds));
-
-        logger.info("New bucket created for key={}, total_buckets_created={}", 
-                key, totalBucketCreations.get());
     }
 
     public void recordBucketCleanup(int cleanedCount) {
-        redisTemplate.opsForHash().increment(GLOBAL_METRICS_KEY, "totalBucketCleanups", cleanedCount);
-        totalBucketCleanups.addAndGet(cleanedCount); 
-        
-        logger.info("Bucket cleanup completed: removed={}, total_cleanups={}", 
-                cleanedCount, totalBucketCleanups.get());
+        logger.debug("Bucket cleanup completed: removed={}", cleanedCount);
     }
 
     public void recordProcessingTime(String key, RateLimitAlgorithm algorithm, long processingTimeMs) {
@@ -339,29 +286,10 @@ public class MetricsService {
             AlgorithmMetricsData algoData = algoMetrics.get(algorithm);
             if (algoData != null) algoData.totalProcessingTime.addAndGet(processingTimeMs);
         }
-        
-        if (processingTimeMs > 10) { // Log slow processing
-            logger.warn("Slow rate limit processing detected: key={}, algorithm={}, processing_time_ms={}", 
-                    key, algorithm, processingTimeMs);
-        }
-    }
-
-    private double calculateDeniedRatio() {
-        long total = totalAllowedRequests.get() + totalDeniedRequests.get();
-        return total > 0 ? (double) totalDeniedRequests.get() / total * 100 : 0.0;
-    }
-
-    public void setRedisConnected(boolean connected) {
-        this.redisConnected = connected;
-    }
-
-    public boolean isRedisConnected() {
-        return redisConnected;
     }
 
     public MetricsResponse getMetrics() {
         long now = System.currentTimeMillis();
-        // Return cached metrics if they are still fresh
         if (cachedMetrics != null && (now - lastCacheTime) < CACHE_DURATION_MS) {
             return cachedMetrics;
         }
@@ -370,10 +298,8 @@ public class MetricsService {
         Map<String, MetricsResponse.AlgorithmMetrics> algoResults = new HashMap<>();
 
         try {
-            // Pull Global metrics from Redis to ensure we have cluster-wide totals
             loadGlobalMetricsFromRedis();
 
-            // Aggregated Algorithm metrics from Redis
             for (RateLimitAlgorithm algo : RateLimitAlgorithm.values()) {
                 String algoKey = ALGORITHM_METRICS_PREFIX + algo.name();
                 Map<Object, Object> algoData = redisTemplate.opsForHash().entries(algoKey);
@@ -382,17 +308,10 @@ public class MetricsService {
                     long allowed = getLongValue(algoData.get("allowedRequests"));
                     long denied = getLongValue(algoData.get("deniedRequests"));
                     long time = getLongValue(algoData.get("totalProcessingTime"));
-                    
                     algoResults.put(algo.name(), new MetricsResponse.AlgorithmMetrics(allowed, denied, time));
-                } else {
-                    // Fallback to local if Redis has no data yet
-                    AlgorithmMetricsData local = algoMetrics.get(algo);
-                    algoResults.put(algo.name(), new MetricsResponse.AlgorithmMetrics(
-                        local.allowedRequests.get(), local.deniedRequests.get(), local.totalProcessingTime.get()));
                 }
             }
 
-            // Pull active keys from Redis using SCAN to find active sessions
             Set<String> activeKeyNames = redisTemplate.keys(ACTIVE_KEYS_PREFIX + "*");
             if (activeKeyNames != null) {
                 for (String fullKey : activeKeyNames) {
@@ -411,7 +330,6 @@ public class MetricsService {
                 }
             }
 
-            // Get recent events from Redis list
             java.util.List<Object> eventJsons = redisTemplate.opsForList().range(RECENT_EVENTS_LIST, 0, MAX_RECENT_EVENTS - 1);
             java.util.List<MetricsResponse.RateLimitEvent> events = new java.util.ArrayList<>();
             if (eventJsons != null) {
@@ -425,20 +343,13 @@ public class MetricsService {
             }
 
             cachedMetrics = new MetricsResponse(
-                metrics,
-                algoResults,
-                events,
-                redisConnected,
-                totalAllowedRequests.get(),
-                totalDeniedRequests.get(),
-                totalProcessingTimeMs.get()
+                metrics, algoResults, events, redisConnected,
+                totalAllowedRequests.get(), totalDeniedRequests.get(), totalProcessingTimeMs.get()
             );
             lastCacheTime = now;
-            
             return cachedMetrics;
         } catch (Exception e) {
             logger.error("Error aggregating metrics from Redis: {}", e.getMessage());
-            // Fallback to local data on error
             return getLocalMetricsFallback();
         }
     }
@@ -457,39 +368,35 @@ public class MetricsService {
         });
 
         return new MetricsResponse(
-            metrics,
-            algoResults,
-            new java.util.ArrayList<>(recentEvents),
-            redisConnected,
-            totalAllowedRequests.get(),
-            totalDeniedRequests.get(),
-            totalProcessingTimeMs.get()
+            metrics, algoResults, new java.util.ArrayList<>(recentEvents),
+            redisConnected, totalAllowedRequests.get(), totalDeniedRequests.get(), totalProcessingTimeMs.get()
         );
     }
 
-        public void clearMetrics() {
-
-            keyMetrics.clear();
-
-            totalAllowedRequests.set(0);
-
-            totalDeniedRequests.set(0);
-
-        }
-
-    
-
-        /**
-
-         * Remove metrics for a specific key.
-
-         */
-
     public void removeKeyMetrics(String key) {
         keyMetrics.remove(key);
-        // Also remove from Redis
         redisTemplate.delete(KEY_METRICS_PREFIX + key);
         redisTemplate.delete(ACTIVE_KEYS_PREFIX + key);
+    }
+
+    /**
+     * Clear all tracked metrics.
+     */
+    public void clearMetrics() {
+        keyMetrics.clear();
+        totalAllowedRequests.set(0);
+        totalDeniedRequests.set(0);
+        totalProcessingTimeMs.set(0);
+        
+        algoMetrics.values().forEach(data -> {
+            data.allowedRequests.set(0);
+            data.deniedRequests.set(0);
+            data.totalProcessingTime.set(0);
+        });
+        
+        recentEvents.clear();
+        saveGlobalMetricsToRedis();
+        cachedMetrics = null;
     }
 
     /**

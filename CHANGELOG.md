@@ -14,7 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Load testing interface connected to backend `/api/benchmark/run` endpoint
   - Configuration management with CRUD operations for global, per-key, and pattern-based limits
   - API Keys management page with active keys tracking and admin controls
-  - Analytics page with historical trends (demo/preview feature)
   - Interactive algorithm comparison tool with educational simulations
   - Built with React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui
   - 6 comprehensive dashboard screenshots included in documentation

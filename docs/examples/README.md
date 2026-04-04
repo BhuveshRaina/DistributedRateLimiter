@@ -11,7 +11,6 @@ This directory contains code examples demonstrating how to integrate with the Di
 ### Features
 - 📊 **Real-time Monitoring** - Live metrics, charts, and activity feeds
 - 🔧 **Algorithm Comparison** - Interactive testing of all 5 algorithms
-- 📈 **Advanced Analytics** - Historical trends and performance insights
 - 🔑 **API Key Management** - Complete lifecycle management with usage tracking
 - ⚙️ **Configuration UI** - Visual configuration management
 - 🧪 **Load Testing** - Integrated performance testing suite

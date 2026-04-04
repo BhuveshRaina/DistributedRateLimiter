@@ -1,6 +1,6 @@
 # Rate Limiter Dashboard
 
-A comprehensive, real-time dashboard for monitoring and managing distributed rate limiting systems. Built with modern web technologies to provide deep insights into rate limiting performance, algorithm comparison, and traffic analytics.
+A comprehensive, real-time dashboard for monitoring and managing distributed rate limiting systems. Built with modern web technologies to provide deep insights into rate limiting performance and algorithm comparison.
 
 ![Dashboard Preview](public/screenshots/dashboard-preview.png)
 
@@ -17,16 +17,7 @@ A comprehensive, real-time dashboard for monitoring and managing distributed rat
 - **Algorithm Comparison**: Side-by-side testing of different rate limiting algorithms
 - **Traffic Pattern Simulation**: Generate steady, bursty, spike, or custom traffic patterns
 - **Real-time Visualization**: Live charts showing token levels and request handling
-- **Performance Analytics**: Detailed statistics on rejection rates, response times, and efficiency
 - **Interactive Configuration**: Adjust capacity, refill rates, and time windows on the fly
-
-### 📈 Advanced Analytics
-- **Historical Data Analysis**: Performance trends over configurable time ranges (1h, 24h, 7d, 30d)
-- **Top Keys Analysis**: Identify most active keys and their usage patterns
-- **Algorithm Performance Metrics**: Memory usage, efficiency scores, and throughput comparison
-- **Usage Trends**: Visualize traffic patterns and identify peak usage periods
-- **Smart Alerts**: Automated notifications for spikes, degradation, and anomalies
-- **Data Export**: CSV and JSON export functionality for external analysis
 
 ### 🔑 API Key Management
 - **Comprehensive Key Management**: Create, view, edit, and delete API keys
@@ -155,15 +146,6 @@ The dashboard connects to a distributed rate limiter backend running on **http:/
 
 ### Demo/Educational Features (⚠️ Mock Data)
 
-#### **Analytics Page** (`/analytics`)
-- **Status**: ⚠️ **Demo Data Only**
-- **Reason**: Requires time-series database backend (InfluxDB, Prometheus, TimescaleDB)
-- **Missing Backend**: 
-  - Historical data storage and aggregation
-  - `/api/analytics/*` endpoints for trends, top keys, performance metrics
-- **Current Implementation**: Client-side simulated data for preview purposes
-- **Future**: See [Analytics Feature Roadmap](#analytics-feature-roadmap)
-
 #### **Algorithms Page** (`/algorithms`)
 - **Status**: 🎓 **Educational Client-Side Simulation**
 - **Purpose**: Interactive algorithm comparison and visualization
@@ -225,37 +207,7 @@ Configuration Page
             └─► Returns current config state
 ```
 
-### Analytics Feature Roadmap
-
-To implement real analytics features, the backend needs:
-
-1. **Time-Series Database Integration**
-   - InfluxDB, Prometheus, or TimescaleDB
-   - Store historical metrics with timestamps
-   - Efficient aggregation queries
-
-2. **Backend Endpoints**
-   ```
-   GET /api/analytics/performance?timeRange=24h
-   GET /api/analytics/top-keys?limit=10&sortBy=requests
-   GET /api/analytics/algorithm-performance
-   GET /api/analytics/usage-trends?interval=1h
-   GET /api/analytics/alerts?severity=high
-   ```
-
-3. **Data Collection**
-   - Metrics streaming to time-series DB
-   - Scheduled aggregation jobs
-   - Alert threshold monitoring
-
-4. **Export Functionality**
-   - CSV/JSON generation on backend
-   - Date range filtering
-   - Compressed archive downloads
-
-See [GitHub Issue #XXX](https://github.com/uppnrise/distributed-rate-limiter/issues) for implementation tracking.
-
-## 🚀 Quick Start
+### Quick Start
 
 ### Prerequisites
 - **Node.js 18+** and npm
@@ -377,7 +329,6 @@ src/
 │   ├── layout/          # Layout components (Sidebar, TopNav)
 │   ├── dashboard/       # Dashboard-specific components
 │   ├── algorithms/      # Algorithm simulation components
-│   ├── analytics/       # Analytics and reporting components
 │   ├── apikeys/         # API key management components
 │   ├── configuration/   # Configuration management components
 │   └── loadtest/        # Load testing components
@@ -405,9 +356,6 @@ ML-driven adaptive rate limiting dashboard with:
 
 ### Algorithms (`/algorithms`)
 Interactive algorithm comparison with traffic simulation and performance analysis.
-
-### Analytics (`/analytics`)
-Historical performance analysis with trends, top keys, and alerts.
 
 ### Configuration (`/configuration`)
 Comprehensive configuration management with global, key-specific, and pattern-based rules.
@@ -522,10 +470,6 @@ Manage global, per-key, and pattern-based rate limiting configurations.
 ### 🔑 API Keys Management
 ![API Keys](public/screenshots/api-keys-preview.png)
 Track active keys with statistics, admin controls, and bulk operations.
-
-### 📈 Analytics & Trends
-![Analytics](public/screenshots/analytics-preview.png)
-Historical performance analysis with time-series data *(demo preview - requires time-series database backend)*.
 
 ### 🧮 Algorithm Comparison
 ![Algorithms](public/screenshots/algorithms-preview.png)

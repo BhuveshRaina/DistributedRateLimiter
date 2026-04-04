@@ -75,7 +75,6 @@ A modern, real-time React-based dashboard for monitoring and managing your distr
 - **📈 Load Testing** - Production-grade benchmarking via backend API
 - **⚙️ Configuration Management** - CRUD operations for global, per-key, and pattern-based limits
 - **🔑 API Key Management** - Active keys tracking with statistics and admin controls
-- **📉 Analytics** - Historical performance trends (demo/preview feature)
 
 **Tech Stack:** React 18 + TypeScript + Vite + Tailwind CSS + shadcn/ui + Recharts
 
@@ -158,17 +157,6 @@ Centralized view of active rate limit keys:
 - **Status Monitoring**: See token counts, capacity, refill rates
 - **Reset Operations**: Clear individual keys or bulk reset via admin API
 - **Algorithm Assignment**: View which algorithm each key uses
-
-### 📈 Analytics & Trends (Demo Preview)
-![Analytics Trends](examples/web-dashboard/public/screenshots/analytics-preview.png)
-
-Historical analytics and insights *(displays simulated data for preview purposes)*:
-- **Time-series Visualization**: Request volume, block rate, latency trends
-- **Top Keys Analysis**: Most active endpoints and users
-- **Geographic Distribution**: Request origins by region
-- **Compliance Reporting**: Rate limit violations and threshold breaches
-
-> **Note**: This page displays simulated analytics data for preview purposes. Historical analytics features require a time-series database backend (InfluxDB, Prometheus, or TimescaleDB) with data aggregation endpoints. See the [Analytics Roadmap](examples/web-dashboard/README.md#-analytics-roadmap-future-implementation) for implementation details.
 
 ### 🧮 Algorithm Comparison
 ![Algorithms Education](examples/web-dashboard/public/screenshots/algorithms-preview.png)

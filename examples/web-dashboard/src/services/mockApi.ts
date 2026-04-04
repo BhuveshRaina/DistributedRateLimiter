@@ -70,42 +70,6 @@ export class MockApiService {
     return { success: true, config };
   }
 
-  // Analytics API
-  static async getAnalytics(timeRange: string) {
-    await randomDelay();
-    if (shouldSimulateError()) {
-      throw new Error('Failed to fetch analytics data');
-    }
-    
-    const dataPoints = timeRange === '1h' ? 12 : timeRange === '24h' ? 24 : 30;
-    const usageData = [];
-    
-    for (let i = 0; i < dataPoints; i++) {
-      usageData.push({
-        timestamp: new Date(Date.now() - (dataPoints - i) * 3600000).toISOString(),
-        requests: Math.floor(Math.random() * 5000) + 1000,
-        successful: Math.floor(Math.random() * 4500) + 900,
-        rejected: Math.floor(Math.random() * 500) + 50,
-      });
-    }
-    
-    return {
-      overview: {
-        totalRequests: Math.floor(Math.random() * 1000000) + 5000000,
-        successRate: 95 + Math.random() * 4,
-        peakRps: Math.floor(Math.random() * 2000) + 1000,
-        avgResponseTime: Math.floor(Math.random() * 50) + 50,
-      },
-      usageData,
-      algorithmDistribution: [
-        { name: "Token Bucket", value: Math.floor(Math.random() * 30) + 30 },
-        { name: "Sliding Window", value: Math.floor(Math.random() * 25) + 25 },
-        { name: "Fixed Window", value: Math.floor(Math.random() * 20) + 20 },
-        { name: "Leaky Bucket", value: Math.floor(Math.random() * 15) + 15 },
-      ],
-    };
-  }
-
   // API Keys API
   static async getApiKeys() {
     await randomDelay();

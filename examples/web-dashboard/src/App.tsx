@@ -12,7 +12,6 @@ import Algorithms from "./pages/Algorithms";
 import Configuration from "./pages/Configuration";
 import Scheduling from "./pages/Scheduling";
 import LoadTesting from "./pages/LoadTesting";
-import Analytics from "./pages/Analytics";
 import ApiKeys from "./pages/ApiKeys";
 import Adaptive from "./pages/Adaptive";
 import NotFound from "./pages/NotFound";
@@ -43,7 +42,6 @@ const App = () => (
                   <Route path="/configuration" element={<Configuration />} />
                   <Route path="/scheduling" element={<Scheduling />} />
                   <Route path="/load-testing" element={<LoadTesting />} />
-                  <Route path="/analytics" element={<Analytics />} />
                   <Route path="/api-keys" element={<ApiKeys />} />
                   <Route path="/adaptive" element={<Adaptive />} />
                 </Route>

@@ -463,7 +463,7 @@ curl -X POST http://localhost:8080/api/ratelimit/config/patterns/api:v1:* \
   }'
 
 # Test various API endpoints that match the pattern
-endpoints=("users" "orders" "products" "analytics")
+endpoints=("users" "orders" "products")
 
 for endpoint in "${endpoints[@]}"; do
   echo "Testing api:v1:$endpoint"

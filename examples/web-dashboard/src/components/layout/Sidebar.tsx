@@ -4,7 +4,6 @@ import {
   Settings, 
   Sliders, 
   Zap, 
-  BarChart3, 
   Key,
   Calendar,
   ChevronLeft,
@@ -24,7 +23,6 @@ const navItems = [
   { title: "Configuration", url: "/configuration", icon: Sliders },
   { title: "Scheduling", url: "/scheduling", icon: Calendar },
   { title: "Load Testing", url: "/load-testing", icon: Zap },
-  { title: "Analytics", url: "/analytics", icon: BarChart3 },
   { title: "API Keys", url: "/api-keys", icon: Key },
 ];
 
