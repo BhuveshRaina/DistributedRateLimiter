@@ -3,7 +3,6 @@ import { KeysOverview } from "@/components/apikeys/KeysOverview";
 import { KeysTable } from "@/components/apikeys/KeysTable";
 import { CreateKeyModal } from "@/components/apikeys/CreateKeyModal";
 import { KeyDetailsPanel } from "@/components/apikeys/KeyDetailsPanel";
-import { BulkOperationsDialog } from "@/components/apikeys/BulkOperationsDialog";
 import { ApiHealthCheck } from "@/components/ApiHealthCheck";
 import {
   AlertDialog,
@@ -23,10 +22,8 @@ import { generateMockAccessLogs } from "@/utils/mockApiKeys";
 const ApiKeys = () => {
   const [loading, setLoading] = useState(true);
   const [keys, setKeys] = useState<ApiKey[]>([]);
-  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [selectedKeyForDetails, setSelectedKeyForDetails] = useState<ApiKey | null>(null);
-  const [isBulkDialogOpen, setIsBulkDialogOpen] = useState(false);
   const [keyToDelete, setKeyToDelete] = useState<string | null>(null);
 
   // Load active authentication keys from backend
@@ -127,42 +124,6 @@ const ApiKeys = () => {
     }
   };
 
-  const handleBulkActivate = () => {
-    setKeys(
-      keys.map((k) => (selectedKeys.includes(k.id) ? { ...k, status: "active" as const } : k))
-    );
-    setSelectedKeys([]);
-    toast.success(`Activated ${selectedKeys.length} API keys`);
-  };
-
-  const handleBulkDeactivate = () => {
-    setKeys(
-      keys.map((k) => (selectedKeys.includes(k.id) ? { ...k, status: "inactive" as const } : k))
-    );
-    setSelectedKeys([]);
-    toast.success(`Deactivated ${selectedKeys.length} API keys`);
-  };
-
-  const handleBulkDelete = () => {
-    setKeys(keys.filter((k) => !selectedKeys.includes(k.id)));
-    setSelectedKeys([]);
-    toast.success(`Deleted ${selectedKeys.length} API keys`);
-  };
-
-  const handleBulkExport = () => {
-    const selectedKeysData = keys.filter((k) => selectedKeys.includes(k.id));
-    const blob = new Blob([JSON.stringify(selectedKeysData, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `api-keys-${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success("API keys exported successfully");
-  };
-
   const handleRegenerateKey = () => {
     if (selectedKeyForDetails) {
       const newKey = `rl_${Array.from({ length: 32 }, () =>
@@ -190,13 +151,10 @@ const ApiKeys = () => {
       <KeysOverview
         keys={keys}
         onCreateNew={() => setIsCreateModalOpen(true)}
-        onBulkOperations={() => setIsBulkDialogOpen(true)}
       />
 
       <KeysTable
         keys={keys}
-        selectedKeys={selectedKeys}
-        onSelectionChange={setSelectedKeys}
         onView={setSelectedKeyForDetails}
         onEdit={(key) => toast.info("Edit functionality coming soon")}
         onDelete={(id) => setKeyToDelete(id)}
@@ -221,16 +179,6 @@ const ApiKeys = () => {
           }
         }}
         onRegenerate={handleRegenerateKey}
-      />
-
-      <BulkOperationsDialog
-        open={isBulkDialogOpen}
-        onClose={() => setIsBulkDialogOpen(false)}
-        selectedCount={selectedKeys.length}
-        onActivate={handleBulkActivate}
-        onDeactivate={handleBulkDeactivate}
-        onDelete={handleBulkDelete}
-        onExport={handleBulkExport}
       />
 
       <AlertDialog open={!!keyToDelete} onOpenChange={() => setKeyToDelete(null)}>

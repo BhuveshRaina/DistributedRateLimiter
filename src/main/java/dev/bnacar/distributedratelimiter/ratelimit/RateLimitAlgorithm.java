@@ -30,13 +30,5 @@ public enum RateLimitAlgorithm {
      * Provides traffic shaping with predictable processing rates regardless of
      * input bursts. Ideal for downstream system protection and SLA compliance.
      */
-    LEAKY_BUCKET,
-    
-    /**
-     * Composite algorithm - combines multiple rate limiting algorithms with
-     * configurable combination logic (AND/OR/WEIGHTED/HIERARCHICAL).
-     * Enables complex scenarios like multi-dimensional limits, hierarchical 
-     * limiting, and resource-specific rate limiting.
-     */
-    COMPOSITE
+    LEAKY_BUCKET
 }

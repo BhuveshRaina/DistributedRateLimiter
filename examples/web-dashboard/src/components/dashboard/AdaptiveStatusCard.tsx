@@ -90,7 +90,7 @@ export const AdaptiveStatusCard = () => {
           </div>
           <div>
             <h3 className="font-semibold">Adaptive Rate Limiting</h3>
-            <p className="text-xs text-muted-foreground">ML-driven optimization</p>
+            <p className="text-xs text-muted-foreground">AIMD policy optimization</p>
           </div>
         </div>
         <Badge variant={config?.enabled ? "default" : "secondary"}>

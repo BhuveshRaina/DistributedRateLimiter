@@ -8,18 +8,18 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Adaptive ML Model for rate limit optimization.
- * Simplified version using only System Health and User Metrics.
+ * AIMD-based Policy Engine for rate limit optimization.
+ * Uses System Health and User Metrics to apply Additive Increase / Multiplicative Decrease logic.
  */
 @Component
-public class AdaptiveMLModel {
+public class AimdPolicyEngine {
     
-    private static final Logger logger = LoggerFactory.getLogger(AdaptiveMLModel.class);
+    private static final Logger logger = LoggerFactory.getLogger(AimdPolicyEngine.class);
     
     /**
-     * Predict adaptation decision based on system health and user metrics.
+     * Determine adaptation decision based on system health and user metrics.
      */
-    public AdaptationDecision predict(SystemHealth health,
+    public AdaptationDecision determineAdaptation(SystemHealth health,
                                      UserMetrics userMetrics,
                                      int currentCapacity,
                                      int currentRefillRate) {

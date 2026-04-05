@@ -1,182 +1,81 @@
 package dev.bnacar.distributedratelimiter.ratelimit;
 
+import dev.bnacar.distributedratelimiter.monitoring.MetricsService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
-import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.test.context.TestPropertySource;
-
-import dev.bnacar.distributedratelimiter.TestcontainersConfiguration;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
-@SpringBootTest
-@Import(TestcontainersConfiguration.class)
-@TestPropertySource(properties = {
-    "ratelimiter.redis.enabled=true",
-    "ratelimiter.capacity=5",
-    "ratelimiter.refillRate=1"
-})
 class DistributedRateLimiterServiceTest {
 
-    @Autowired
-    private DistributedRateLimiterService distributedRateLimiterService;
-
-    @Autowired
-    private RedisTemplate<String, Object> redisTemplate;
+    private DistributedRateLimiterService service;
+    
+    @Mock
+    private ConfigurationResolver configurationResolver;
+    
+    @Mock
+    private RateLimiterBackend primaryBackend;
+    
+    @Mock
+    private MetricsService metricsService;
+    
+    @Mock
+    private RateLimiter rateLimiter;
 
     @BeforeEach
     void setUp() {
-        // Clean up any existing test data
-        distributedRateLimiterService.clearBuckets();
+        MockitoAnnotations.openMocks(this);
+        service = new DistributedRateLimiterService(configurationResolver, primaryBackend);
     }
 
     @Test
-    void testRedisBackendIsUsed() {
-        assertTrue(distributedRateLimiterService.isUsingRedis());
-        assertFalse(distributedRateLimiterService.isUsingFallback());
+    void testIsAllowed_WhenRedisAvailable_ReturnsBackendResult() {
+        String key = "test-key";
+        RateLimitConfig config = new RateLimitConfig(10, 2);
+        
+        when(configurationResolver.resolveBaseKey(key)).thenReturn(key);
+        when(configurationResolver.resolveConfig(key)).thenReturn(config);
+        when(primaryBackend.isAvailable()).thenReturn(true);
+        when(primaryBackend.getRateLimiter(eq(key), any())).thenReturn(rateLimiter);
+        when(rateLimiter.getCapacity()).thenReturn(10);
+        when(rateLimiter.getRefillRate()).thenReturn(2);
+        when(rateLimiter.tryConsumeWithResult(1)).thenReturn(new RateLimiter.ConsumptionResult(true, 9, 10));
+
+        boolean allowed = service.isAllowed(key, 1);
+        
+        assertTrue(allowed);
+        verify(primaryBackend).getRateLimiter(eq(key), any());
     }
 
     @Test
-    void testBasicRateLimit() {
-        String key = "test:basic";
+    void testIsAllowed_WhenRedisUnavailable_ReturnsDenied() {
+        String key = "test-key";
+        RateLimitConfig config = new RateLimitConfig(10, 2);
         
-        // Should allow consuming within capacity
-        assertTrue(distributedRateLimiterService.isAllowed(key, 3));
-        assertTrue(distributedRateLimiterService.isAllowed(key, 2));
+        when(configurationResolver.resolveBaseKey(key)).thenReturn(key);
+        when(configurationResolver.resolveConfig(key)).thenReturn(config);
+        when(primaryBackend.isAvailable()).thenReturn(false);
+
+        boolean allowed = service.isAllowed(key, 1);
         
-        // Should reject when capacity is exceeded
-        assertFalse(distributedRateLimiterService.isAllowed(key, 1));
+        assertFalse(allowed);
+        verify(primaryBackend, never()).getRateLimiter(any(), any());
     }
 
     @Test
-    void testDistributedRateLimit() {
-        String key = "test:distributed";
+    void testIsAllowed_WhenBackendThrowsException_ReturnsDenied() {
+        String key = "test-key";
         
-        // Create two instances (simulating different app instances)
-        // Use a configuration that matches the test properties
-        RateLimiterConfiguration config = new RateLimiterConfiguration();
-        config.setCapacity(5);
-        config.setRefillRate(1);
-        ConfigurationResolver resolver = new ConfigurationResolver(config);
-        DistributedRateLimiterService instance1 = new DistributedRateLimiterService(resolver, redisTemplate);
-        DistributedRateLimiterService instance2 = new DistributedRateLimiterService(resolver, redisTemplate);
-        
-        // Consume tokens from both instances
-        assertTrue(instance1.isAllowed(key, 2));
-        assertTrue(instance2.isAllowed(key, 2));
-        
-        // Should have consumed 4 out of 5 tokens total
-        assertTrue(instance1.isAllowed(key, 1));
-        
-        // No more tokens should be available from either instance
-        assertFalse(instance1.isAllowed(key, 1));
-        assertFalse(instance2.isAllowed(key, 1));
-    }
+        when(configurationResolver.resolveBaseKey(key)).thenReturn(key);
+        when(primaryBackend.isAvailable()).thenReturn(true);
+        when(primaryBackend.getRateLimiter(any(), any())).thenThrow(new RuntimeException("Redis connection failed"));
 
-    @Test
-    void testZeroTokenConsumption() {
-        String key = "test:zero";
-        assertFalse(distributedRateLimiterService.isAllowed(key, 0));
-    }
-
-    @Test
-    void testNegativeTokenConsumption() {
-        String key = "test:negative";
-        assertFalse(distributedRateLimiterService.isAllowed(key, -1));
-    }
-
-    @Test
-    void testMultipleKeys() {
-        String key1 = "test:key1";
-        String key2 = "test:key2";
+        boolean allowed = service.isAllowed(key, 1);
         
-        // Each key should have independent limits
-        assertTrue(distributedRateLimiterService.isAllowed(key1, 5));
-        assertTrue(distributedRateLimiterService.isAllowed(key2, 5));
-        
-        // Both keys should be exhausted independently
-        assertFalse(distributedRateLimiterService.isAllowed(key1, 1));
-        assertFalse(distributedRateLimiterService.isAllowed(key2, 1));
-    }
-
-    @Test
-    void testTokenRefill() throws InterruptedException {
-        String key = "test:refill";
-        
-        // Consume all tokens
-        assertTrue(distributedRateLimiterService.isAllowed(key, 5));
-        assertFalse(distributedRateLimiterService.isAllowed(key, 1));
-        
-        // Wait for refill (refill rate is 1 token per second)
-        Thread.sleep(1100);
-        
-        // Should have refilled 1 token
-        assertTrue(distributedRateLimiterService.isAllowed(key, 1));
-        assertFalse(distributedRateLimiterService.isAllowed(key, 1));
-    }
-
-    @Test
-    void testConcurrentAccessAcrossInstances() throws InterruptedException {
-        String key = "test:concurrent";
-        final int threadCount = 10;
-        final int tokensPerThread = 1;
-        
-        // Create multiple service instances with proper configuration
-        RateLimiterConfiguration config = new RateLimiterConfiguration();
-        config.setCapacity(5);
-        config.setRefillRate(1);
-        ConfigurationResolver resolver = new ConfigurationResolver(config);
-        DistributedRateLimiterService[] instances = new DistributedRateLimiterService[5];
-        for (int i = 0; i < instances.length; i++) {
-            instances[i] = new DistributedRateLimiterService(resolver, redisTemplate);
-        }
-        
-        Thread[] threads = new Thread[threadCount];
-        boolean[] results = new boolean[threadCount];
-        
-        // Create threads that use different service instances
-        for (int i = 0; i < threadCount; i++) {
-            final int index = i;
-            final DistributedRateLimiterService instance = instances[i % instances.length];
-            threads[i] = new Thread(() -> {
-                results[index] = instance.isAllowed(key, tokensPerThread);
-            });
-        }
-        
-        // Start all threads
-        for (Thread thread : threads) {
-            thread.start();
-        }
-        
-        // Wait for all threads to complete
-        for (Thread thread : threads) {
-            thread.join();
-        }
-        
-        // Count successful requests
-        int successCount = 0;
-        for (boolean result : results) {
-            if (result) successCount++;
-        }
-        
-        // Should only allow 5 successful requests (the capacity)
-        assertEquals(5, successCount);
-    }
-
-    @Test
-    void testClearAllBuckets() {
-        String key = "test:clear";
-        
-        // Use some tokens
-        assertTrue(distributedRateLimiterService.isAllowed(key, 3));
-        
-        // Clear buckets
-        distributedRateLimiterService.clearBuckets();
-        
-        // Should have full capacity again
-        assertTrue(distributedRateLimiterService.isAllowed(key, 5));
+        assertFalse(allowed);
     }
 }

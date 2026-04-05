@@ -186,14 +186,17 @@ public class BenchmarkController {
                                 AtomicLong totalRequests,
                                 java.util.concurrent.ConcurrentLinkedQueue<Long> responseTimes) {
         long requestsPerThread = request.getRequestsPerThread();
-        // Use the exact keyPrefix provided without appending threadId to support shared bucket testing
         String key = request.getKeyPrefix() != null ? request.getKeyPrefix() : "benchmark";
         int tokensPerRequest = request.getTokensPerRequest();
         
         long startNano = System.nanoTime();
         long durationNano = (long) request.getDurationSeconds() * 1_000_000_000L;
+        long intervalNano = (request.getDelayBetweenRequestsMs() != null && request.getDelayBetweenRequestsMs() > 0)
+                ? request.getDelayBetweenRequestsMs() * 1_000_000L
+                : 0L;
         
         long currentRequestCount = 0;
+        long nextRequestTimeNano = startNano;
         
         // Resolve algorithm override if provided
         dev.bnacar.distributedratelimiter.ratelimit.RateLimitAlgorithm algorithm = null;
@@ -208,30 +211,40 @@ public class BenchmarkController {
         }
 
         while (currentRequestCount < requestsPerThread) {
+            long now = System.nanoTime();
+            
             // Check if we've exceeded the duration
-            if (System.nanoTime() - startNano > durationNano) {
+            if (now - startNano > durationNano) {
                 break;
+            }
+            
+            // Wait until it's time for the next request (Compensated Delay)
+            if (intervalNano > 0 && now < nextRequestTimeNano) {
+                long waitTimeNano = nextRequestTimeNano - now;
+                if (waitTimeNano > 1_000_000) { // Only sleep if wait is > 1ms for efficiency
+                    try {
+                        Thread.sleep(waitTimeNano / 1_000_000);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+                // Busy wait for the remaining sub-millisecond portion for maximum precision
+                while (System.nanoTime() < nextRequestTimeNano) {
+                    Thread.onSpinWait();
+                }
             }
             
             long requestStart = System.nanoTime();
             try {
-                // In a real load test, custom headers would be added to the HTTP request
-                // For this internal benchmark, we log them if present
-                if (request.getCustomHeaders() != null && !request.getCustomHeaders().isEmpty()) {
-                    // Simulation of header processing
-                    logger.trace("Processing custom headers for request {}: {}", currentRequestCount, request.getCustomHeaders());
-                }
-
                 boolean allowed = rateLimiterService.isAllowed(key, tokensPerRequest, algorithm);
                 long requestDurationNano = System.nanoTime() - requestStart;
                 
-                // Simulate request timeout
                 if (request.getTimeoutMs() != null && (requestDurationNano / 1_000_000) > request.getTimeoutMs()) {
                     throw new java.util.concurrent.TimeoutException("Request timed out");
                 }
 
                 responseTimes.add(requestDurationNano);
-                
                 totalRequests.incrementAndGet();
                 currentRequestCount++;
                 
@@ -239,18 +252,16 @@ public class BenchmarkController {
                     successCount.incrementAndGet();
                 }
                 
-                // Optional delay between requests
-                if (request.getDelayBetweenRequestsMs() != null && request.getDelayBetweenRequestsMs() > 0) {
-                    Thread.sleep(request.getDelayBetweenRequestsMs());
-                }
+                // Set the baseline for the next window
+                nextRequestTimeNano += intervalNano;
                 
             } catch (Exception e) {
                 long requestDurationNano = System.nanoTime() - requestStart;
                 responseTimes.add(requestDurationNano);
-                
                 totalRequests.incrementAndGet();
                 errorCount.incrementAndGet();
                 currentRequestCount++;
+                nextRequestTimeNano += intervalNano;
             }
         }
     }

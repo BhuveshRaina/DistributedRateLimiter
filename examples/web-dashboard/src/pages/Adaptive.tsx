@@ -210,7 +210,7 @@ const Adaptive = () => {
             Adaptive Rate Limiting
           </h2>
           <p className="text-muted-foreground">
-            ML-driven automatic rate limit optimization based on traffic patterns and system metrics
+            AIMD policy-driven automatic rate limit optimization based on traffic patterns and system metrics
           </p>
         </div>
         <Button
@@ -236,7 +236,7 @@ const Adaptive = () => {
             {config.enabled ? (
               <>
                 <strong>Adaptive Rate Limiting is ENABLED.</strong> The system is actively adjusting rate limits
-                based on traffic patterns and system metrics. Evaluations occur every{" "}
+                based on AIMD policies and system metrics. Evaluations occur every{" "}
                 {formatEvaluationInterval(config.evaluationIntervalMs)}.
               </>
             ) : (
@@ -245,7 +245,7 @@ const Adaptive = () => {
                 <code className="bg-yellow-200/50 dark:bg-yellow-800/50 px-1 rounded">
                   ratelimiter.adaptive.enabled=true
                 </code>{" "}
-                in application.properties to enable ML-driven rate limiting.
+                in application.properties to enable AIMD-driven rate limiting.
               </>
             )}
           </AlertDescription>
@@ -451,7 +451,7 @@ const Adaptive = () => {
             <Info className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
             <p className="text-muted-foreground mb-2">No active adaptations observed</p>
             <p className="text-sm text-muted-foreground">
-              Monitoring traffic and applying ML decisions...
+              Monitoring traffic and applying AIMD decisions...
             </p>
           </div>
         ) : (

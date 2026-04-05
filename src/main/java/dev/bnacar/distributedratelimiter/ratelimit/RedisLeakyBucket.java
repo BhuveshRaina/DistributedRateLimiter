@@ -7,27 +7,24 @@ import org.springframework.core.io.ClassPathResource;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 
 /**
  * Redis-based distributed leaky bucket implementation.
- * Uses Lua scripts for atomic queue operations and consistent leak rate processing.
+ * Uses Lua scripts for atomic operations.
+ * For leaky bucket, capacity is the bucket/queue size, and refillRate is the leak rate.
  */
 public class RedisLeakyBucket implements RateLimiter {
     
     private final String key;
-    private final int queueCapacity;
-    private final double leakRatePerSecond;
-    private final long maxQueueTimeMs;
+    private final int capacity;
+    private final int leakRate;
     private final RedisTemplate<String, Object> redisTemplate;
     private final RedisScript<List> leakyBucketScript;
     
-    public RedisLeakyBucket(String key, int queueCapacity, double leakRatePerSecond, 
-                           long maxQueueTimeMs, RedisTemplate<String, Object> redisTemplate) {
-        this.key = "leaky_bucket:" + key;
-        this.queueCapacity = queueCapacity;
-        this.leakRatePerSecond = leakRatePerSecond;
-        this.maxQueueTimeMs = maxQueueTimeMs;
+    public RedisLeakyBucket(String key, int capacity, int leakRate, RedisTemplate<String, Object> redisTemplate) {
+        this.key = key;
+        this.capacity = capacity;
+        this.leakRate = leakRate;
         this.redisTemplate = redisTemplate;
         
         // Load Lua script
@@ -37,18 +34,10 @@ public class RedisLeakyBucket implements RateLimiter {
         this.leakyBucketScript = script;
     }
     
-    /**
-     * Convenience constructor with default max queue time.
-     */
-    public RedisLeakyBucket(String key, int queueCapacity, double leakRatePerSecond, 
-                           RedisTemplate<String, Object> redisTemplate) {
-        this(key, queueCapacity, leakRatePerSecond, 5000, redisTemplate);
-    }
-    
     @Override
     public ConsumptionResult tryConsumeWithResult(int tokens) {
         if (tokens <= 0) {
-            return new ConsumptionResult(false, getCurrentTokens(), queueCapacity);
+            return new ConsumptionResult(false, getCurrentTokens());
         }
         
         try {
@@ -56,54 +45,38 @@ public class RedisLeakyBucket implements RateLimiter {
             List<Object> result = redisTemplate.execute(
                 leakyBucketScript,
                 Collections.singletonList(key),
-                queueCapacity, leakRatePerSecond, tokens, currentTime, maxQueueTimeMs
+                capacity, leakRate, tokens, currentTime
             );
             
             if (result != null && result.size() >= 2) {
-                // Result format: {success, queue_size, capacity, leak_rate, last_leak_time, estimated_wait_ms}
-                Number successValue = (Number) result.get(0);
-                Number queueSizeValue = (Number) result.get(1);
+                // Result format: {allowed, remaining_capacity, capacity, leak_rate, last_leak}
+                Object allowedValue = result.get(0);
+                Object remainingValue = result.get(1);
                 
-                boolean allowed = successValue != null && successValue.intValue() == 1;
-                int remaining = Math.max(0, queueCapacity - (queueSizeValue != null ? queueSizeValue.intValue() : 0));
+                boolean allowed = false;
+                if (allowedValue instanceof Number) {
+                    allowed = ((Number) allowedValue).intValue() == 1;
+                }
                 
-                return new ConsumptionResult(allowed, remaining, queueCapacity);
+                int remaining = 0;
+                if (remainingValue instanceof Number) {
+                    remaining = ((Number) remainingValue).intValue();
+                }
+                
+                return new ConsumptionResult(allowed, remaining, capacity);
             }
             
-            return new ConsumptionResult(false, 0, queueCapacity);
+            return new ConsumptionResult(false, 0, capacity);
         } catch (Exception e) {
-            return new ConsumptionResult(false, 0, queueCapacity);
+            org.slf4j.LoggerFactory.getLogger(RedisLeakyBucket.class)
+                .error("Redis operation failed for key {}: {}", key, e.getMessage());
+            return new ConsumptionResult(false, 0, capacity);
         }
     }
-
+    
     @Override
     public boolean tryConsume(int tokens) {
-        if (tokens <= 0) {
-            return false;
-        }
-        
-        try {
-            long currentTime = System.currentTimeMillis();
-            List<Object> result = redisTemplate.execute(
-                leakyBucketScript,
-                Collections.singletonList(key),
-                queueCapacity, leakRatePerSecond, tokens, currentTime, maxQueueTimeMs
-            );
-            
-            if (result != null && !result.isEmpty()) {
-                // Result format: {success, queue_size, capacity, leak_rate, last_leak_time, estimated_wait_ms}
-                Object successValue = result.get(0);
-                if (successValue instanceof Number) {
-                    return ((Number) successValue).intValue() == 1;
-                }
-            }
-            
-            return false;
-        } catch (Exception e) {
-            // Log error and return false to fail closed
-            // In production, you might want to fall back to local rate limiting
-            throw new RuntimeException("Redis leaky bucket operation failed for key: " + key, e);
-        }
+        return tryConsumeWithResult(tokens).allowed;
     }
     
     @Override
@@ -114,62 +87,53 @@ public class RedisLeakyBucket implements RateLimiter {
             List<Object> result = redisTemplate.execute(
                 leakyBucketScript,
                 Collections.singletonList(key),
-                queueCapacity, leakRatePerSecond, 0, currentTime, maxQueueTimeMs
+                capacity, leakRate, 0, currentTime
             );
             
             if (result != null && result.size() >= 2) {
-                Object queueSizeValue = result.get(1);
-                if (queueSizeValue instanceof Number) {
-                    int currentQueueSize = ((Number) queueSizeValue).intValue();
-                    // Return available queue capacity (similar to available tokens)
-                    return Math.max(0, queueCapacity - currentQueueSize);
+                Object remainingValue = result.get(1);
+                if (remainingValue instanceof Number) {
+                    return ((Number) remainingValue).intValue();
                 }
             }
             
-            return queueCapacity; // Default to full capacity if we can't read state
+            return 0;
         } catch (Exception e) {
-            throw new RuntimeException("Redis leaky bucket state query failed for key: " + key, e);
+            return 0;
         }
     }
 
     @Override
     public void setCurrentTokens(int tokens) {
-        // No-op
+        try {
+            // For leaky bucket, we set the 'level' which is capacity - tokens
+            int level = Math.max(0, capacity - tokens);
+            redisTemplate.opsForHash().put(key, "level", level);
+            redisTemplate.opsForHash().put(key, "last_leak", System.currentTimeMillis());
+        } catch (Exception e) {
+            org.slf4j.LoggerFactory.getLogger(RedisLeakyBucket.class)
+                .error("Failed to manually set tokens for key {}: {}", key, e.getMessage());
+        }
     }
     
     @Override
     public int getCapacity() {
-        return queueCapacity;
+        return capacity;
     }
     
     @Override
     public int getRefillRate() {
-        return (int) Math.ceil(leakRatePerSecond);
-    }
-    
-    /**
-     * Get the exact leak rate as a double.
-     */
-    public double getLeakRatePerSecond() {
-        return leakRatePerSecond;
-    }
-    
-    /**
-     * Get the maximum queue time in milliseconds.
-     */
-    public long getMaxQueueTimeMs() {
-        return maxQueueTimeMs;
+        return leakRate;
     }
     
     @Override
     public long getLastRefillTime() {
         try {
             long currentTime = System.currentTimeMillis();
-            // Use a dummy consume of 0 tokens to get current state
             List<Object> result = redisTemplate.execute(
                 leakyBucketScript,
                 Collections.singletonList(key),
-                queueCapacity, leakRatePerSecond, 0, currentTime, maxQueueTimeMs
+                capacity, leakRate, 0, currentTime
             );
             
             if (result != null && result.size() >= 5) {
@@ -179,107 +143,9 @@ public class RedisLeakyBucket implements RateLimiter {
                 }
             }
             
-            return System.currentTimeMillis(); // Default to current time
+            return System.currentTimeMillis();
         } catch (Exception e) {
-            return System.currentTimeMillis(); // Default to current time on error
-        }
-    }
-    
-    /**
-     * Get current queue size from Redis.
-     */
-    public int getQueueSize() {
-        try {
-            long currentTime = System.currentTimeMillis();
-            List<Object> result = redisTemplate.execute(
-                leakyBucketScript,
-                Collections.singletonList(key),
-                queueCapacity, leakRatePerSecond, 0, currentTime, maxQueueTimeMs
-            );
-            
-            if (result != null && result.size() >= 2) {
-                Object queueSizeValue = result.get(1);
-                if (queueSizeValue instanceof Number) {
-                    return ((Number) queueSizeValue).intValue();
-                }
-            }
-            
-            return 0;
-        } catch (Exception e) {
-            return 0; // Return 0 on error
-        }
-    }
-    
-    /**
-     * Get estimated wait time for a new request.
-     * Returns the estimated time in milliseconds before a request would be processed.
-     * 
-     * @param tokens Number of tokens to estimate for
-     * @return Estimated wait time in milliseconds, or -1 if would be rejected
-     */
-    public long getEstimatedWaitTime(int tokens) {
-        if (tokens <= 0) {
-            return 0;
-        }
-        
-        try {
-            // Simulate adding the request to see estimated wait time
-            int currentQueueSize = getQueueSize();
-            int availableCapacity = queueCapacity - currentQueueSize;
-            
-            if (tokens > availableCapacity) {
-                return -1; // Would be rejected
-            }
-            
-            // Estimate processing time based on current queue and leak rate
-            double totalProcessingTime = (currentQueueSize + tokens) / leakRatePerSecond * 1000;
-            return (long) totalProcessingTime;
-            
-        } catch (Exception e) {
-            return -1; // Error case
-        }
-    }
-    
-    /**
-     * Attempt to enqueue a request asynchronously (simulation).
-     * Note: This is a simulation since Redis operations are synchronous,
-     * but it provides the estimated behavior of the leaky bucket.
-     * 
-     * @param tokens Number of tokens to consume
-     * @return CompletableFuture that represents the eventual processing result
-     */
-    public CompletableFuture<Boolean> enqueueRequest(int tokens) {
-        CompletableFuture<Boolean> future = new CompletableFuture<>();
-        
-        try {
-            boolean success = tryConsume(tokens);
-            if (success) {
-                // In a real implementation, this would wait for actual processing
-                // For now, we complete immediately for simplicity
-                future.complete(true);
-            } else {
-                future.complete(false);
-            }
-        } catch (Exception e) {
-            future.completeExceptionally(e);
-        }
-        
-        return future;
-    }
-    
-    /**
-     * Clear all queued requests (admin operation).
-     * Useful for testing or emergency situations.
-     */
-    public void clearQueue() {
-        try {
-            String queueListKey = key + ":queue";
-            String metadataKey = key + ":meta";
-            
-            redisTemplate.delete(queueListKey);
-            redisTemplate.delete(metadataKey);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to clear leaky bucket queue for key: " + key, e);
+            return System.currentTimeMillis();
         }
     }
 }

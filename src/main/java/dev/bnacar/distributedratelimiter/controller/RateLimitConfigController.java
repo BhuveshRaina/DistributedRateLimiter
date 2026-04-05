@@ -140,7 +140,7 @@ public class RateLimitConfigController {
     public ResponseEntity<ConfigurationStats> getConfigurationStats() {
         ConfigurationStats stats = new ConfigurationStats(
             configurationResolver.getCacheSize(),
-            rateLimiterService.getBucketCount(),
+            configuration.getKeys().size(),
             configuration.getKeys().size(),
             configuration.getPatterns().size()
         );

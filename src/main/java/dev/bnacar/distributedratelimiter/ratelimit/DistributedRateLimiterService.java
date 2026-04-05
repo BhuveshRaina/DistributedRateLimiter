@@ -10,8 +10,8 @@ import org.springframework.stereotype.Service;
 import jakarta.annotation.PreDestroy;
 
 /**
- * Distributed rate limiter service that uses Redis as primary backend
- * with automatic fallback to in-memory when Redis is unavailable.
+ * Distributed rate limiter service that uses Redis as the primary backend.
+ * If Redis is unavailable, the service will return denied results to maintain consistency.
  */
 @Service
 @Primary
@@ -19,8 +19,6 @@ import jakarta.annotation.PreDestroy;
 public class DistributedRateLimiterService extends RateLimiterService {
     
     private final RateLimiterBackend primaryBackend;
-    private final RateLimiterBackend fallbackBackend;
-    private volatile boolean usingFallback = false;
     
     @Autowired
     public DistributedRateLimiterService(
@@ -30,7 +28,6 @@ public class DistributedRateLimiterService extends RateLimiterService {
             RedisTemplate<String, Object> redisTemplate) {
         super(configurationResolver, configuration, metricsService);
         this.primaryBackend = new RedisRateLimiterBackend(redisTemplate);
-        this.fallbackBackend = new InMemoryRateLimiterBackend();
     }
     
     // Convenient constructor for testing and manual instantiation
@@ -40,14 +37,12 @@ public class DistributedRateLimiterService extends RateLimiterService {
         this(configurationResolver, new RateLimiterConfiguration(), null, redisTemplate);
     }
     
-    // Constructor for testing with mocked backends
+    // Constructor for testing with mocked backend
     public DistributedRateLimiterService(
             ConfigurationResolver configurationResolver,
-            RateLimiterBackend primaryBackend,
-            RateLimiterBackend fallbackBackend) {
+            RateLimiterBackend primaryBackend) {
         super(configurationResolver, new RateLimiterConfiguration(), null);
         this.primaryBackend = primaryBackend;
-        this.fallbackBackend = fallbackBackend;
     }
     
     @Override
@@ -74,9 +69,12 @@ public class DistributedRateLimiterService extends RateLimiterService {
         }
         
         RateLimiter.ConsumptionResult result;
-        RateLimiterBackend backend = getAvailableBackend();
         try {
-            RateLimiter rateLimiter = backend.getRateLimiter(sharedKey, config);
+            if (!primaryBackend.isAvailable()) {
+                throw new RuntimeException("Redis backend is unavailable");
+            }
+
+            RateLimiter rateLimiter = primaryBackend.getRateLimiter(sharedKey, config);
             
             // Check if existing limiter's configuration is out of sync with current resolved config
             if (rateLimiter.getCapacity() != config.getCapacity() || 
@@ -88,29 +86,15 @@ public class DistributedRateLimiterService extends RateLimiterService {
                           config.getCapacity(), config.getRefillRate());
                 
                 // Clear the cached limiter so a new one is created with the updated config
-                backend.remove(sharedKey);
-                rateLimiter = backend.getRateLimiter(sharedKey, config);
+                primaryBackend.remove(sharedKey);
+                rateLimiter = primaryBackend.getRateLimiter(sharedKey, config);
             }
             
             result = rateLimiter.tryConsumeWithResult(tokens);
         } catch (Exception ex) {
             org.slf4j.LoggerFactory.getLogger(DistributedRateLimiterService.class)
                 .error("Backend error for key {}: {}", sharedKey, ex.getMessage());
-            
-            // Fallback to in-memory only if the primary backend (Redis) failed
-            if (backend != fallbackBackend) {
-                usingFallback = true;
-                try {
-                    RateLimiter fallbackLimiter = fallbackBackend.getRateLimiter(sharedKey, config);
-                    result = fallbackLimiter.tryConsumeWithResult(tokens);
-                } catch (Exception fallbackEx) {
-                    org.slf4j.LoggerFactory.getLogger(DistributedRateLimiterService.class)
-                        .error("Fallback backend also failed for key {}: {}", sharedKey, fallbackEx.getMessage());
-                    result = new RateLimiter.ConsumptionResult(false, -1);
-                }
-            } else {
-                result = new RateLimiter.ConsumptionResult(false, -1);
-            }
+            result = new RateLimiter.ConsumptionResult(false, -1);
         }
 
         long processingTime = System.currentTimeMillis() - startTime;
@@ -139,53 +123,23 @@ public class DistributedRateLimiterService extends RateLimiterService {
     }
     
     /**
-     * Get the currently available backend, with fallback logic.
-     */
-    private RateLimiterBackend getAvailableBackend() {
-        // Check if primary backend (Redis) is available
-        if (primaryBackend.isAvailable()) {
-            if (usingFallback) {
-                // We were using fallback but Redis is back - log the recovery
-                usingFallback = false;
-            }
-            return primaryBackend;
-        } else {
-            if (!usingFallback) {
-                // We just switched to fallback - log the failure
-                usingFallback = true;
-            }
-            return fallbackBackend;
-        }
-    }
-    
-    /**
      * Check if currently using Redis backend.
      */
     public boolean isUsingRedis() {
-        return !usingFallback && primaryBackend.isAvailable();
+        return primaryBackend.isAvailable();
     }
     
     /**
-     * Check if currently using fallback backend.
-     */
-    public boolean isUsingFallback() {
-        return usingFallback || !primaryBackend.isAvailable();
-    }
-    
-    /**
-     * Clear all rate limiters from all backends.
+     * Clear all rate limiters from the backend.
      */
     @Override
     public void clearBuckets() {
         primaryBackend.clear();
-        fallbackBackend.clear();
         configurationResolver.clearCache();
     }
     
     @PreDestroy
     public void shutdown() {
-        if (fallbackBackend instanceof InMemoryRateLimiterBackend) {
-            ((InMemoryRateLimiterBackend) fallbackBackend).shutdown();
-        }
+        // No local resources to shut down in Redis-only mode
     }
 }

@@ -26,7 +26,7 @@ public class AdaptiveRateLimitEngine {
     
     private final SystemMetricsCollector metricsCollector;
     private final UserMetricsModeler userMetricsModeler;
-    private final AdaptiveMLModel adaptiveModel;
+    private final AimdPolicyEngine policyEngine;
     private final ConfigurationResolver configurationResolver;
     private final RateLimiterService rateLimiterService;
     
@@ -51,7 +51,7 @@ public class AdaptiveRateLimitEngine {
     public AdaptiveRateLimitEngine(
             SystemMetricsCollector metricsCollector,
             UserMetricsModeler userMetricsModeler,
-            AdaptiveMLModel adaptiveModel,
+            AimdPolicyEngine policyEngine,
             @Lazy ConfigurationResolver configurationResolver,
             @Lazy RateLimiterService rateLimiterService,
             @Value("${ratelimiter.adaptive.enabled:true}") boolean enabled,
@@ -63,7 +63,7 @@ public class AdaptiveRateLimitEngine {
         
         this.metricsCollector = metricsCollector;
         this.userMetricsModeler = userMetricsModeler;
-        this.adaptiveModel = adaptiveModel;
+        this.policyEngine = policyEngine;
         this.configurationResolver = configurationResolver;
         this.rateLimiterService = rateLimiterService;
         this.enabled = enabled;
@@ -173,8 +173,8 @@ public class AdaptiveRateLimitEngine {
         SystemHealth health = metricsCollector.getCurrentHealth();
         UserMetrics userMetrics = userMetricsModeler.getUserMetrics(key);
         
-        // Use ML model to generate decision based on CURRENT limits
-        return adaptiveModel.predict(health, userMetrics, baseCapacity, baseRefillRate);
+        // Use policy engine to generate decision based on CURRENT limits
+        return policyEngine.determineAdaptation(health, userMetrics, baseCapacity, baseRefillRate);
     }
     
     /**

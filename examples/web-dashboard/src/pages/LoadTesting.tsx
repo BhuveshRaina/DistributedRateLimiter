@@ -22,7 +22,7 @@ const LoadTesting = () => {
     return saved ? JSON.parse(saved) : {
       targetKey: "rl_prod_user123",
       requestRate: 100,
-      duration: 30,
+      duration: 10,
       concurrency: 10,
       pattern: "constant",
       tokensPerRequest: 1,

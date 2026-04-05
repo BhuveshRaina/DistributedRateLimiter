@@ -4,15 +4,11 @@ import dev.bnacar.distributedratelimiter.adaptive.AdaptiveRateLimitEngine;
 import dev.bnacar.distributedratelimiter.models.AdaptiveInfo;
 import dev.bnacar.distributedratelimiter.models.RateLimitRequest;
 import dev.bnacar.distributedratelimiter.models.RateLimitResponse;
-import dev.bnacar.distributedratelimiter.models.CompositeRateLimitResponse;
-import dev.bnacar.distributedratelimiter.models.GeographicRateLimitResponse;
 import dev.bnacar.distributedratelimiter.ratelimit.RateLimiter;
 import dev.bnacar.distributedratelimiter.ratelimit.RateLimiterService;
 import dev.bnacar.distributedratelimiter.ratelimit.RateLimitConfig;
-import dev.bnacar.distributedratelimiter.ratelimit.CompositeRateLimiterService;
 import dev.bnacar.distributedratelimiter.ratelimit.RateLimitAlgorithm;
 import dev.bnacar.distributedratelimiter.ratelimit.ConfigurationResolver;
-import dev.bnacar.distributedratelimiter.geo.GeographicRateLimitService;
 import dev.bnacar.distributedratelimiter.security.ApiKeyService;
 import dev.bnacar.distributedratelimiter.security.IpAddressExtractor;
 import dev.bnacar.distributedratelimiter.security.IpSecurityService;
@@ -43,22 +39,17 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/ratelimit")
-@Tag(name = "Rate Limit", description = "Rate limiting operations for token bucket algorithm")
+@Tag(name = "Rate Limit", description = "Rate limiting operations")
 @CrossOrigin(origins = {"http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173", "http://127.0.0.1:3000", "http://[::1]:5173", "http://[::1]:3000"})
 public class RateLimitController {
     private static final Logger logger = LoggerFactory.getLogger(RateLimitController.class);
 
     private final RateLimiterService rateLimiterService;
-    private final CompositeRateLimiterService compositeRateLimiterService;
-    private final GeographicRateLimitService geographicRateLimitService;
     private final ApiKeyService apiKeyService;
     private final IpSecurityService ipSecurityService;
     private final IpAddressExtractor ipAddressExtractor;
     private final AdaptiveRateLimitEngine adaptiveEngine;
     private final ConfigurationResolver configurationResolver;
-    
-    @Value("${ratelimiter.geographic.enabled:false}")
-    private boolean geographicRateLimitingEnabled;
     
     @Value("${ratelimiter.adaptive.enabled:true}")
     private boolean adaptiveRateLimitingEnabled;
@@ -67,16 +58,12 @@ public class RateLimitController {
     private boolean strictMode;
 
     public RateLimitController(RateLimiterService rateLimiterService,
-                              CompositeRateLimiterService compositeRateLimiterService,
-                              @org.springframework.beans.factory.annotation.Autowired(required = false) GeographicRateLimitService geographicRateLimitService,
                               ApiKeyService apiKeyService,
                               IpSecurityService ipSecurityService,
                               IpAddressExtractor ipAddressExtractor,
                               AdaptiveRateLimitEngine adaptiveEngine,
                               ConfigurationResolver configurationResolver) {
         this.rateLimiterService = rateLimiterService;
-        this.compositeRateLimiterService = compositeRateLimiterService;
-        this.geographicRateLimitService = geographicRateLimitService;
         this.apiKeyService = apiKeyService;
         this.ipSecurityService = ipSecurityService;
         this.ipAddressExtractor = ipAddressExtractor;
@@ -86,7 +73,7 @@ public class RateLimitController {
 
     @PostMapping("/check")
     @Operation(summary = "Check rate limit for a key",
-               description = "Checks if a request is allowed based on the configured rate limits for the given key. Supports geographic rate limiting when enabled.")
+               description = "Checks if a request is allowed based on the configured rate limits for the given key.")
     @ApiResponses(value = {
         @ApiResponse(responseCode = "200", 
                     description = "Request allowed",
@@ -108,9 +95,9 @@ public class RateLimitController {
                                      schema = @Schema(implementation = RateLimitResponse.class)))
     })
     public ResponseEntity<RateLimitResponse> checkRateLimit(
-            @Parameter(description = "Rate limit request containing key, tokens, optional API key, and optional client info for geographic rate limiting",
+            @Parameter(description = "Rate limit request containing key, tokens, and optional API key",
                       required = true,
-                      content = @Content(examples = @ExampleObject(value = "{\"key\":\"user:123\",\"tokens\":1,\"apiKey\":\"your-api-key\",\"clientInfo\":{\"sourceIP\":\"192.168.1.1\",\"countryCode\":\"US\"}}")))
+                      content = @Content(examples = @ExampleObject(value = "{\"key\":\"user:123\",\"tokens\":1,\"apiKey\":\"your-api-key\"}")))
             @Valid @RequestBody RateLimitRequest request,
             HttpServletRequest httpRequest) {
         
@@ -132,118 +119,36 @@ public class RateLimitController {
         // Use the raw key provided in the request
         String effectiveKey = request.getKey();
         
-        // Extract headers for geographic detection
-        Map<String, String> headers = extractGeographicHeaders(httpRequest);
+        // Standard single-algorithm rate limiting
+        RateLimiter.ConsumptionResult result = rateLimiterService.isAllowedWithResult(effectiveKey, request.getTokens(), request.getAlgorithm());
+        boolean allowed = result.allowed;
         
-        // Try geographic rate limiting first if enabled and service is available
-        if (geographicRateLimitingEnabled && geographicRateLimitService != null) {
-            try {
-                GeographicRateLimitResponse geoResponse = geographicRateLimitService.checkGeographicRateLimit(
-                    request, clientIp, headers
-                );
-                
-                // Return geographic response if geographic rules were applied
-                if (geoResponse.getGeoLocation() != null && 
-                    !"NO_GEOGRAPHIC_RULES_APPLY".equals(geoResponse.getFallbackReason())) {
-                    
-                    // Record traffic event for adaptive learning
-                    if (adaptiveRateLimitingEnabled) {
-                        adaptiveEngine.recordTrafficEvent(effectiveKey, request.getTokens(), geoResponse.isAllowed());
-                    }
-                    
-                    if (geoResponse.isAllowed()) {
-                        return ResponseEntity.ok(geoResponse);
-                    } else {
-                        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(geoResponse);
-                    }
-                }
-                // If no geographic rules apply, fall through to standard processing
-            } catch (Exception e) {
-                // Log error but continue with standard rate limiting
-                logger.warn("Geographic rate limiting failed for key: {}, falling back to standard rate limiting", 
-                          request.getKey(), e);
-            }
+        // Record traffic event for adaptive learning
+        if (adaptiveRateLimitingEnabled) {
+            adaptiveEngine.recordTrafficEvent(effectiveKey, request.getTokens(), allowed);
         }
         
-        // Check if this is a composite rate limiting request
-        if (request.getAlgorithm() == RateLimitAlgorithm.COMPOSITE || request.getCompositeConfig() != null) {
-            // Handle composite rate limiting
-            CompositeRateLimitResponse compositeResponse = compositeRateLimiterService.checkCompositeRateLimit(
-                effectiveKey, request.getTokens(), request.getCompositeConfig()
-            );
-            
-            // Record traffic event for adaptive learning
-            if (adaptiveRateLimitingEnabled) {
-                adaptiveEngine.recordTrafficEvent(effectiveKey, request.getTokens(), compositeResponse.isAllowed());
-            }
-            
-            if (compositeResponse.isAllowed()) {
-                return ResponseEntity.ok(compositeResponse);
-            } else {
-                return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(compositeResponse);
-            }
+        // Build adaptive info if enabled
+        AdaptiveInfo adaptiveInfo = null;
+        if (adaptiveRateLimitingEnabled) {
+            adaptiveInfo = buildAdaptiveInfo(effectiveKey);
+        }
+        
+        RateLimitResponse response = new RateLimitResponse(request.getKey(), request.getTokens(), allowed, result.remainingTokens, result.capacity, adaptiveInfo);
+        
+        // Record the algorithm actually used for the response
+        RateLimitAlgorithm usedAlgorithm = request.getAlgorithm();
+        if (usedAlgorithm == null) {
+            RateLimitConfig config = rateLimiterService.getKeyConfiguration(effectiveKey);
+            usedAlgorithm = config != null ? config.getAlgorithm() : RateLimitAlgorithm.TOKEN_BUCKET;
+        }
+        response.setAlgorithm(usedAlgorithm.name());
+        
+        if (allowed) {
+            return ResponseEntity.ok(response);
         } else {
-            // Standard single-algorithm rate limiting
-            RateLimiter.ConsumptionResult result = rateLimiterService.isAllowedWithResult(effectiveKey, request.getTokens(), request.getAlgorithm());
-            boolean allowed = result.allowed;
-            
-            // Record traffic event for adaptive learning
-            if (adaptiveRateLimitingEnabled) {
-                adaptiveEngine.recordTrafficEvent(effectiveKey, request.getTokens(), allowed);
-            }
-            
-            // Build adaptive info if enabled
-            AdaptiveInfo adaptiveInfo = null;
-            if (adaptiveRateLimitingEnabled) {
-                adaptiveInfo = buildAdaptiveInfo(effectiveKey);
-            }
-            
-            RateLimitResponse response = new RateLimitResponse(request.getKey(), request.getTokens(), allowed, result.remainingTokens, result.capacity, adaptiveInfo);
-            
-            // Record the algorithm actually used for the response
-            RateLimitAlgorithm usedAlgorithm = request.getAlgorithm();
-            if (usedAlgorithm == null) {
-                RateLimitConfig config = rateLimiterService.getKeyConfiguration(effectiveKey);
-                usedAlgorithm = config != null ? config.getAlgorithm() : RateLimitAlgorithm.TOKEN_BUCKET;
-            }
-            response.setAlgorithm(usedAlgorithm.name());
-            
-            if (allowed) {
-                return ResponseEntity.ok(response);
-            } else {
-                return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(response);
-            }
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(response);
         }
-    }
-    
-    /**
-     * Extract geographic headers from HTTP request for location detection.
-     */
-    private Map<String, String> extractGeographicHeaders(HttpServletRequest request) {
-        Map<String, String> headers = new HashMap<>();
-        
-        // CloudFlare headers
-        addHeaderIfPresent(headers, request, "CF-IPCountry");
-        addHeaderIfPresent(headers, request, "CF-IPContinent");
-        addHeaderIfPresent(headers, request, "CF-IPCity");
-        addHeaderIfPresent(headers, request, "CF-Timezone");
-        
-        // AWS CloudFront headers
-        addHeaderIfPresent(headers, request, "CloudFront-Viewer-Country");
-        addHeaderIfPresent(headers, request, "CloudFront-Viewer-Country-Region");
-        
-        // Azure CDN headers
-        addHeaderIfPresent(headers, request, "X-MS-Country-Code");
-        addHeaderIfPresent(headers, request, "X-Country-Code");
-        
-        // Generic geographic headers
-        addHeaderIfPresent(headers, request, "X-Country");
-        addHeaderIfPresent(headers, request, "X-Region");
-        addHeaderIfPresent(headers, request, "X-City");
-        addHeaderIfPresent(headers, request, "X-Timezone");
-        addHeaderIfPresent(headers, request, "X-GeoIP-Country");
-        
-        return headers;
     }
     
     /**
@@ -279,15 +184,5 @@ public class RateLimitController {
             logger.debug("Could not build adaptive info for key: {}", key, e);
         }
         return null;
-    }
-    
-    /**
-     * Add header to map if present in request.
-     */
-    private void addHeaderIfPresent(Map<String, String> headers, HttpServletRequest request, String headerName) {
-        String headerValue = request.getHeader(headerName);
-        if (headerValue != null && !headerValue.trim().isEmpty()) {
-            headers.put(headerName, headerValue.trim());
-        }
     }
 }

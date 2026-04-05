@@ -35,9 +35,7 @@ public class RedisRateLimiterBackend implements RateLimiterBackend {
             case FIXED_WINDOW:
                 return new RedisFixedWindow(redisKey, config.getCapacity(), config.getRefillRate(), redisTemplate);
             case LEAKY_BUCKET:
-                // Use cleanupIntervalMs from config as the maxQueueTimeMs for LeakyBucket
-                return new RedisLeakyBucket(redisKey, config.getCapacity(), config.getRefillRate(), 
-                                           config.getCleanupIntervalMs(), redisTemplate);
+                return new RedisLeakyBucket(redisKey, config.getCapacity(), config.getRefillRate(), redisTemplate);
             default:
                 throw new IllegalArgumentException("Unknown algorithm: " + config.getAlgorithm());
         }

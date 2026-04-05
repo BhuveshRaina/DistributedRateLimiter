@@ -6,10 +6,9 @@ import { ApiKey } from "@/types/apiKeys";
 interface KeysOverviewProps {
   keys: ApiKey[];
   onCreateNew: () => void;
-  onBulkOperations: () => void;
 }
 
-export const KeysOverview = ({ keys, onCreateNew, onBulkOperations }: KeysOverviewProps) => {
+export const KeysOverview = ({ keys, onCreateNew }: KeysOverviewProps) => {
   const totalKeys = keys.length;
   const activeKeys = keys.filter((k) => k.status === "active").length;
   const expiredKeys = keys.filter((k) => k.status === "expired").length;
@@ -43,10 +42,6 @@ export const KeysOverview = ({ keys, onCreateNew, onBulkOperations }: KeysOvervi
         <Button onClick={onCreateNew} className="gap-2">
           <Plus className="h-4 w-4" />
           Generate New Key
-        </Button>
-        <Button onClick={onBulkOperations} variant="outline" className="gap-2">
-          <Settings className="h-4 w-4" />
-          Bulk Operations
         </Button>
       </div>
     </div>

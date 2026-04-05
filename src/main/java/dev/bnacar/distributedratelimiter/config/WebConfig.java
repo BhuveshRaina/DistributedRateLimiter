@@ -11,19 +11,22 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
 /**
- * Simple admin authentication configuration using interceptors.
+ * Consolidated Web Configuration for the Distributed Rate Limiter.
+ * Handles Interceptors and other Web MVC specific settings.
  */
 @Configuration
-public class AdminAuthConfiguration implements WebMvcConfigurer {
+public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
+        // Register Admin Auth Interceptor
         registry.addInterceptor(new AdminAuthInterceptor())
                 .addPathPatterns("/admin/**");
     }
 
     /**
      * Simple HTTP Basic Auth interceptor for admin endpoints.
+     * Moves logic from the removed AdminAuthConfiguration.
      */
     private static class AdminAuthInterceptor implements HandlerInterceptor {
         
@@ -34,6 +37,11 @@ public class AdminAuthConfiguration implements WebMvcConfigurer {
         public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) 
                 throws Exception {
             
+            // Allow preflight
+            if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
+                return true;
+            }
+
             String authHeader = request.getHeader("Authorization");
             
             if (authHeader == null || !authHeader.startsWith("Basic ")) {

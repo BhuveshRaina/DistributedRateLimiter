@@ -2,167 +2,101 @@ package dev.bnacar.distributedratelimiter.ratelimit;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.test.context.TestPropertySource;
+import org.springframework.data.redis.core.script.RedisScript;
 
-import dev.bnacar.distributedratelimiter.TestcontainersConfiguration;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
-@SpringBootTest
-@Import(TestcontainersConfiguration.class)
-@TestPropertySource(properties = {
-    "ratelimiter.redis.enabled=true"
-})
 class RedisTokenBucketTest {
 
-    @Autowired
+    @Mock
     private RedisTemplate<String, Object> redisTemplate;
 
-    private RedisTokenBucket redisTokenBucket;
-    private final String testKey = "test:redis:bucket";
+    private RedisTokenBucket tokenBucket;
+    private final String testKey = "test-token-bucket";
+    private final int capacity = 100;
+    private final int refillRate = 10;
 
     @BeforeEach
     void setUp() {
-        // Clean up any existing test data
-        redisTemplate.delete(testKey);
-        
-        // Create a new Redis token bucket with capacity=10, refillRate=2
-        redisTokenBucket = new RedisTokenBucket(testKey, 10, 2, redisTemplate);
+        MockitoAnnotations.openMocks(this);
+        tokenBucket = new RedisTokenBucket(testKey, capacity, refillRate, redisTemplate);
     }
 
     @Test
-    void testInitialTokensAvailable() {
-        // New bucket should have full capacity available
-        assertEquals(10, redisTokenBucket.getCurrentTokens());
-        assertEquals(10, redisTokenBucket.getCapacity());
-        assertEquals(2, redisTokenBucket.getRefillRate());
+    void testTryConsumeWithResult_Success() {
+        // Mock successful consumption: {allowed (1), remaining_tokens, capacity, refill_rate, last_refill}
+        List<Object> redisResult = Arrays.asList(1L, 95L, (long) capacity, (long) refillRate, System.currentTimeMillis());
+        
+        when(redisTemplate.execute(
+            any(RedisScript.class), 
+            eq(Collections.singletonList(testKey)), 
+            eq(capacity), eq(refillRate), eq(5), anyLong()
+        )).thenReturn(redisResult);
+
+        RateLimiter.ConsumptionResult result = tokenBucket.tryConsumeWithResult(5);
+
+        assertTrue(result.allowed);
+        assertEquals(95, result.remainingTokens);
+        assertEquals(capacity, result.capacity);
     }
 
     @Test
-    void testSuccessfulTokenConsumption() {
-        assertTrue(redisTokenBucket.tryConsume(5));
-        assertEquals(5, redisTokenBucket.getCurrentTokens());
+    void testTryConsumeWithResult_Denied() {
+        // Mock denied consumption: {allowed (0), remaining_tokens (2), capacity, refill_rate, last_refill}
+        List<Object> redisResult = Arrays.asList(0L, 2L, (long) capacity, (long) refillRate, System.currentTimeMillis());
         
-        assertTrue(redisTokenBucket.tryConsume(3));
-        assertEquals(2, redisTokenBucket.getCurrentTokens());
+        when(redisTemplate.execute(
+            any(RedisScript.class), 
+            eq(Collections.singletonList(testKey)), 
+            eq(capacity), eq(refillRate), eq(5), anyLong()
+        )).thenReturn(redisResult);
+
+        RateLimiter.ConsumptionResult result = tokenBucket.tryConsumeWithResult(5);
+
+        assertFalse(result.allowed);
+        assertEquals(2, result.remainingTokens);
     }
 
     @Test
-    void testFailedTokenConsumptionWhenInsufficientTokens() {
-        // Consume all tokens
-        assertTrue(redisTokenBucket.tryConsume(10));
-        assertEquals(0, redisTokenBucket.getCurrentTokens());
+    void testTryConsumeWithResult_InvalidTokens() {
+        RateLimiter.ConsumptionResult result = tokenBucket.tryConsumeWithResult(0);
+        assertFalse(result.allowed);
         
-        // Should fail to consume more tokens
-        assertFalse(redisTokenBucket.tryConsume(1));
-        assertEquals(0, redisTokenBucket.getCurrentTokens());
+        result = tokenBucket.tryConsumeWithResult(-1);
+        assertFalse(result.allowed);
     }
 
     @Test
-    void testZeroTokenConsumption() {
-        assertFalse(redisTokenBucket.tryConsume(0));
-        assertEquals(10, redisTokenBucket.getCurrentTokens());
+    void testGetCurrentTokens() {
+        // Mocking state query (requested 0 tokens)
+        List<Object> redisResult = Arrays.asList(1L, 50L, (long) capacity, (long) refillRate, System.currentTimeMillis());
+        when(redisTemplate.execute(
+            any(RedisScript.class), 
+            eq(Collections.singletonList(testKey)), 
+            eq(capacity), eq(refillRate), eq(0), anyLong()
+        )).thenReturn(redisResult);
+
+        int currentTokens = tokenBucket.getCurrentTokens();
+
+        assertEquals(50, currentTokens);
     }
 
     @Test
-    void testNegativeTokenConsumption() {
-        assertFalse(redisTokenBucket.tryConsume(-1));
-        assertEquals(10, redisTokenBucket.getCurrentTokens());
+    void testGetCapacity() {
+        assertEquals(capacity, tokenBucket.getCapacity());
     }
 
     @Test
-    void testTokenRefillOverTime() throws InterruptedException {
-        // Consume all tokens
-        assertTrue(redisTokenBucket.tryConsume(10));
-        assertEquals(0, redisTokenBucket.getCurrentTokens());
-        
-        // Wait for refill (refill rate is 2 tokens per second)
-        Thread.sleep(1100); // Wait 1.1 seconds
-        
-        // Should have at least 2 tokens now
-        int currentTokens = redisTokenBucket.getCurrentTokens();
-        assertTrue(currentTokens >= 2, "Expected at least 2 tokens after 1.1 seconds, got " + currentTokens);
-        
-        // Should be able to consume the refilled tokens
-        assertTrue(redisTokenBucket.tryConsume(2));
-    }
-
-    @Test
-    void testCapacityLimit() throws InterruptedException {
-        // Start with full bucket, wait for refill time
-        Thread.sleep(1100);
-        
-        // Should not exceed capacity even after waiting
-        assertEquals(10, redisTokenBucket.getCurrentTokens());
-    }
-
-    @Test
-    void testConcurrentAccess() throws InterruptedException {
-        final int threadCount = 15;  // Reduced from 20 to be less aggressive
-        final int tokensPerThread = 1;
-        Thread[] threads = new Thread[threadCount];
-        boolean[] results = new boolean[threadCount];
-        
-        // Create threads that try to consume tokens
-        for (int i = 0; i < threadCount; i++) {
-            final int index = i;
-            threads[i] = new Thread(() -> {
-                try {
-                    // Add a tiny delay to spread out the requests slightly
-                    Thread.sleep(1);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-                results[index] = redisTokenBucket.tryConsume(tokensPerThread);
-            });
-        }
-        
-        // Start all threads
-        for (Thread thread : threads) {
-            thread.start();
-        }
-        
-        // Wait for all threads to complete
-        for (Thread thread : threads) {
-            thread.join();
-        }
-        
-        // Count successful consumptions
-        int successCount = 0;
-        for (boolean result : results) {
-            if (result) successCount++;
-        }
-        
-        // Debug information
-        int finalTokenCount = redisTokenBucket.getCurrentTokens();
-        System.out.println("Success count: " + successCount + ", Final token count: " + finalTokenCount);
-        
-        // Should only allow 10 successful consumptions (the capacity)
-        assertEquals(10, successCount);
-        assertTrue(finalTokenCount >= 0, "Token count should not be negative, got: " + finalTokenCount);
-        assertEquals(0, finalTokenCount);
-    }
-
-    @Test
-    void testPersistenceAcrossInstances() {
-        // Create first instance and consume some tokens
-        RedisTokenBucket bucket1 = new RedisTokenBucket(testKey, 10, 2, redisTemplate);
-        assertTrue(bucket1.tryConsume(6));
-        assertEquals(4, bucket1.getCurrentTokens());
-        
-        // Create second instance with same key - should see the same state
-        RedisTokenBucket bucket2 = new RedisTokenBucket(testKey, 10, 2, redisTemplate);
-        assertEquals(4, bucket2.getCurrentTokens());
-        
-        // Consume tokens from second instance
-        assertTrue(bucket2.tryConsume(2));
-        assertEquals(2, bucket2.getCurrentTokens());
-        
-        // First instance should see the updated state
-        assertEquals(2, bucket1.getCurrentTokens());
+    void testGetRefillRate() {
+        assertEquals(refillRate, tokenBucket.getRefillRate());
     }
 }

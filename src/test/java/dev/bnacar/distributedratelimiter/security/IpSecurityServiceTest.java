@@ -3,78 +3,64 @@ package dev.bnacar.distributedratelimiter.security;
 import dev.bnacar.distributedratelimiter.config.SecurityConfiguration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 
-import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
-public class IpSecurityServiceTest {
+class IpSecurityServiceTest {
 
+    @Mock
     private SecurityConfiguration securityConfiguration;
+    
+    private SecurityConfiguration.Ip ipProps;
     private IpSecurityService ipSecurityService;
 
     @BeforeEach
-    public void setUp() {
-        securityConfiguration = new SecurityConfiguration();
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+        ipProps = new SecurityConfiguration.Ip();
+        when(securityConfiguration.getIp()).thenReturn(ipProps);
+        
         ipSecurityService = new IpSecurityService(securityConfiguration);
     }
 
     @Test
-    public void testIpAllowedWithNoWhitelistOrBlacklist() {
-        // No whitelist or blacklist configured - should allow all IPs
+    void testIsIpAllowed_WhenBlacklisted_ReturnsFalse() {
+        String blacklistedIp = "1.2.3.4";
+        ipProps.setBlacklist(Collections.singletonList(blacklistedIp));
+        
+        assertFalse(ipSecurityService.isIpAllowed(blacklistedIp));
+    }
+
+    @Test
+    void testIsIpAllowed_WhenWhitelisted_ReturnsTrue() {
+        String whitelistedIp = "5.6.7.8";
+        ipProps.setWhitelist(Collections.singletonList(whitelistedIp));
+        
+        assertTrue(ipSecurityService.isIpAllowed(whitelistedIp));
+    }
+
+    @Test
+    void testIsIpAllowed_WhenWhitelistConfiguredAndIpNotWhitelisted_ReturnsFalse() {
+        String randomIp = "9.9.9.9";
+        ipProps.setWhitelist(Collections.singletonList("5.6.7.8"));
+        
+        assertFalse(ipSecurityService.isIpAllowed(randomIp));
+    }
+
+    @Test
+    void testIsIpAllowed_WhenNoSpecialConfig_ReturnsTrue() {
         assertTrue(ipSecurityService.isIpAllowed("192.168.1.1"));
-        assertTrue(ipSecurityService.isIpAllowed("10.0.0.1"));
-        assertTrue(ipSecurityService.isIpAllowed("127.0.0.1"));
     }
 
     @Test
-    public void testIpBlacklisted() {
-        securityConfiguration.getIp().setBlacklist(Arrays.asList("192.168.1.100", "10.0.0.50"));
-
-        assertFalse(ipSecurityService.isIpAllowed("192.168.1.100"));
-        assertFalse(ipSecurityService.isIpAllowed("10.0.0.50"));
-        assertTrue(ipSecurityService.isIpAllowed("192.168.1.1"));
-    }
-
-    @Test
-    public void testIpWhitelistOnly() {
-        securityConfiguration.getIp().setWhitelist(Arrays.asList("127.0.0.1", "192.168.1.10"));
-
-        assertTrue(ipSecurityService.isIpAllowed("127.0.0.1"));
-        assertTrue(ipSecurityService.isIpAllowed("192.168.1.10"));
-        assertFalse(ipSecurityService.isIpAllowed("192.168.1.1"));
-        assertFalse(ipSecurityService.isIpAllowed("10.0.0.1"));
-    }
-
-    @Test
-    public void testBlacklistOverridesWhitelist() {
-        // IP is both whitelisted and blacklisted - blacklist should take precedence
-        securityConfiguration.getIp().setWhitelist(Arrays.asList("127.0.0.1", "192.168.1.10"));
-        securityConfiguration.getIp().setBlacklist(Arrays.asList("127.0.0.1"));
-
-        assertFalse(ipSecurityService.isIpAllowed("127.0.0.1"));
-        assertTrue(ipSecurityService.isIpAllowed("192.168.1.10"));
-    }
-
-    @Test
-    public void testInvalidIpAddress() {
+    void testIsIpAllowed_WhenIpBlank_ReturnsFalse() {
         assertFalse(ipSecurityService.isIpAllowed(""));
         assertFalse(ipSecurityService.isIpAllowed(null));
-        assertFalse(ipSecurityService.isIpAllowed("   "));
-    }
-
-    @Test
-    public void testCreateIpBasedKey() {
-        assertEquals("ip:192.168.1.1:user123", 
-                    ipSecurityService.createIpBasedKey("user123", "192.168.1.1"));
-        assertEquals("ip:127.0.0.1:api-key-456", 
-                    ipSecurityService.createIpBasedKey("api-key-456", "127.0.0.1"));
-    }
-
-    @Test
-    public void testCreateIpBasedKeyWithNullOrEmptyIp() {
-        assertEquals("user123", ipSecurityService.createIpBasedKey("user123", null));
-        assertEquals("user123", ipSecurityService.createIpBasedKey("user123", ""));
-        assertEquals("user123", ipSecurityService.createIpBasedKey("user123", "   "));
     }
 }

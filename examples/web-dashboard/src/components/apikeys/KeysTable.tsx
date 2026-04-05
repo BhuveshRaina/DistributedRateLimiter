@@ -3,7 +3,6 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Table,
   TableBody,
@@ -25,8 +24,6 @@ import { cn } from "@/lib/utils";
 
 interface KeysTableProps {
   keys: ApiKey[];
-  selectedKeys: string[];
-  onSelectionChange: (ids: string[]) => void;
   onView: (key: ApiKey) => void;
   onEdit: (key: ApiKey) => void;
   onDelete: (id: string) => void;
@@ -44,8 +41,6 @@ const statusColors: Record<KeyStatus, string> = {
 
 export const KeysTable = ({
   keys,
-  selectedKeys,
-  onSelectionChange,
   onView,
   onEdit,
   onDelete,
@@ -70,22 +65,6 @@ export const KeysTable = ({
     }
   };
 
-  const handleSelectAll = (checked: boolean) => {
-    if (checked) {
-      onSelectionChange(filteredKeys.map((k) => k.id));
-    } else {
-      onSelectionChange([]);
-    }
-  };
-
-  const handleSelectKey = (keyId: string, checked: boolean) => {
-    if (checked) {
-      onSelectionChange([...selectedKeys, keyId]);
-    } else {
-      onSelectionChange(selectedKeys.filter((id) => id !== keyId));
-    }
-  };
-
   return (
     <Card className="p-6 shadow-elevated backdrop-blur-sm bg-gradient-to-br from-card to-card/50">
       <div className="mb-6 flex items-center justify-between">
@@ -105,14 +84,6 @@ export const KeysTable = ({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-12">
-                <Checkbox
-                  checked={
-                    filteredKeys.length > 0 && selectedKeys.length === filteredKeys.length
-                  }
-                  onCheckedChange={handleSelectAll}
-                />
-              </TableHead>
               <TableHead>Key Name</TableHead>
               <TableHead>API Key</TableHead>
               <TableHead>Status</TableHead>
@@ -125,21 +96,13 @@ export const KeysTable = ({
           <TableBody>
             {filteredKeys.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-center text-muted-foreground">
+                <TableCell colSpan={7} className="text-center text-muted-foreground">
                   No API keys found
                 </TableCell>
               </TableRow>
             ) : (
               filteredKeys.map((key) => (
                 <TableRow key={key.id} className="hover:bg-accent/50">
-                  <TableCell>
-                    <Checkbox
-                      checked={selectedKeys.includes(key.id)}
-                      onCheckedChange={(checked) =>
-                        handleSelectKey(key.id, checked as boolean)
-                      }
-                    />
-                  </TableCell>
                   <TableCell className="font-medium">{key.name}</TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">

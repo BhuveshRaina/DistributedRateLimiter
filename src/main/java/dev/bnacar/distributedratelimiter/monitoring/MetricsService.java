@@ -313,7 +313,7 @@ public class MetricsService {
             }
 
             Set<String> activeKeyNames = redisTemplate.keys(ACTIVE_KEYS_PREFIX + "*");
-            if (activeKeyNames != null) {
+            if (activeKeyNames != null && !activeKeyNames.isEmpty()) {
                 for (String fullKey : activeKeyNames) {
                     String key = fullKey.substring(ACTIVE_KEYS_PREFIX.length());
                     String keyMetricsHash = KEY_METRICS_PREFIX + key;
@@ -347,6 +347,13 @@ public class MetricsService {
                 totalAllowedRequests.get(), totalDeniedRequests.get(), totalProcessingTimeMs.get()
             );
             lastCacheTime = now;
+            
+            // If we have local metrics but Redis returned nothing (common in unit tests or initial boot),
+            // merge or fallback to local metrics to ensure we don't return empty maps when data exists.
+            if (cachedMetrics.getKeyMetrics().isEmpty() && !keyMetrics.isEmpty()) {
+                return getLocalMetricsFallback();
+            }
+            
             return cachedMetrics;
         } catch (Exception e) {
             logger.error("Error aggregating metrics from Redis: {}", e.getMessage());

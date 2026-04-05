@@ -160,26 +160,23 @@ public class AdminController {
     }
 
     /**
-     * List all active keys with statistics.
+     * List all configured keys with statistics.
      */
     @GetMapping("/keys")
-    @Operation(summary = "List all active rate limiting keys",
-               description = "Retrieves statistics for all currently active rate limiting keys")
+    @Operation(summary = "List all configured rate limiting keys",
+               description = "Retrieves statistics for all currently configured rate limiting keys")
     @ApiResponse(responseCode = "200", 
-                description = "Active keys retrieved successfully",
+                description = "Configured keys retrieved successfully",
                 content = @Content(mediaType = "application/json",
                                  schema = @Schema(implementation = AdminKeysResponse.class)))
     public ResponseEntity<AdminKeysResponse> getAllKeys() {
-        Map<String, RateLimiterService.BucketHolder> bucketHolders = rateLimiterService.getBucketHolders();
+        Map<String, RateLimiterConfiguration.KeyConfig> keyConfigs = configuration.getKeys();
         long currentTime = System.currentTimeMillis();
 
-        List<AdminKeyStats> keyStats = bucketHolders.entrySet().stream()
-            .map(entry -> {
+        List<AdminKeyStats> keyStats = keyConfigs.entrySet().stream()
+            .map((Map.Entry<String, RateLimiterConfiguration.KeyConfig> entry) -> {
                 String key = entry.getKey();
-                RateLimiterService.BucketHolder holder = entry.getValue();
-                RateLimitConfig config = holder.getConfig();
-                long lastAccess = holder.getLastAccessTime();
-                boolean isActive = (currentTime - lastAccess) < config.getCleanupIntervalMs();
+                RateLimiterConfiguration.KeyConfig config = entry.getValue();
 
                 return new AdminKeyStats(
                     key,
@@ -187,16 +184,14 @@ public class AdminController {
                     config.getRefillRate(),
                     config.getCleanupIntervalMs(),
                     config.getAlgorithm(),
-                    lastAccess,
-                    isActive
+                    currentTime,
+                    true
                 );
             })
             .collect(Collectors.toList());
 
         int totalKeys = keyStats.size();
-        int activeKeys = (int) keyStats.stream().filter(AdminKeyStats::isActive).count();
-
-        AdminKeysResponse response = new AdminKeysResponse(keyStats, totalKeys, activeKeys);
+        AdminKeysResponse response = new AdminKeysResponse(keyStats, totalKeys, totalKeys);
         return ResponseEntity.ok(response);
     }
 }

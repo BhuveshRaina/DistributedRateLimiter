@@ -51,30 +51,6 @@ public class SystemMetricsCollector {
     }
     
     /**
-     * Evaluate system capacity and generate adaptation signal
-     */
-    public AdaptationSignal evaluateSystemCapacity() {
-        SystemHealth health = getCurrentHealth();
-        
-        // Reduce limits if system is under stress
-        if (health.getCpuUtilization() > 0.8 || health.getResponseTimeP95() > 2000) {
-            logger.warn("System under stress - CPU: {}%, Response Time P95: {}ms", 
-                       health.getCpuUtilization() * 100, health.getResponseTimeP95());
-            return AdaptationSignal.REDUCE_LIMITS;
-        } 
-        
-        // Increase limits if system has capacity
-        if (health.getCpuUtilization() < 0.3 && health.getErrorRate() < 0.001) {
-            logger.info("System has capacity - CPU: {}%, Error Rate: {}", 
-                       health.getCpuUtilization() * 100, health.getErrorRate());
-            return AdaptationSignal.INCREASE_LIMITS;
-        }
-        
-        // Maintain current limits if system is stable
-        return AdaptationSignal.MAINTAIN_LIMITS;
-    }
-    
-    /**
      * Get CPU utilization (0.0 to 1.0)
      */
     private double getCPUUtilization() {

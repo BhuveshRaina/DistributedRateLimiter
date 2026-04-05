@@ -4,13 +4,13 @@ This directory contains code examples demonstrating how to integrate with the Di
 
 ## 🎨 Interactive Web Dashboard
 
-**NEW!** Try our comprehensive web dashboard for real-time monitoring and management:
+Try our comprehensive web dashboard for real-time monitoring and management:
 
 📁 **Location**: [`/examples/web-dashboard`](../../examples/web-dashboard/)
 
 ### Features
 - 📊 **Real-time Monitoring** - Live metrics, charts, and activity feeds
-- 🔧 **Algorithm Comparison** - Interactive testing of all 5 algorithms
+- 🔧 **Algorithm Comparison** - Interactive testing of all algorithms
 - 🔑 **API Key Management** - Complete lifecycle management with usage tracking
 - ⚙️ **Configuration UI** - Visual configuration management
 - 🧪 **Load Testing** - Integrated performance testing suite
@@ -23,22 +23,12 @@ npm run dev
 # Dashboard available at http://localhost:5173
 ```
 
-See the [Dashboard README](../../examples/web-dashboard/README.md) for complete documentation.
-
 ---
-
-## Quick Start
-
-All examples demonstrate the basic rate limiting flow:
-
-1. **Check Rate Limit**: Send a POST request to `/api/ratelimit/check`
-2. **Handle Response**: Process the response to determine if the request should proceed
-3. **Implement Backoff**: Apply appropriate delays when rate limited
 
 ## Available Examples
 
 ### 🎨 Interactive Dashboard
-- [Web Dashboard](../../examples/web-dashboard/README.md) - **NEW!** Full-featured monitoring and management UI
+- [Web Dashboard](../../examples/web-dashboard/README.md) - Full-featured monitoring and management UI
 
 ### 💻 Client Libraries
 - [Java/Spring Boot](./java-client.md) - Complete integration example
@@ -49,7 +39,7 @@ All examples demonstrate the basic rate limiting flow:
 ### 📝 Testing & Examples
 - [cURL](./curl-examples.md) - Command-line testing examples
 - [Leaky Bucket](./leaky-bucket-examples.md) - Traffic shaping examples
-- [Composite Rate Limiting](../../examples/composite-rate-limiting.md) - Multi-algorithm examples (**NEW**)
+- [Composite Rate Limiting](../../examples/composite-rate-limiting.md) - Multi-algorithm examples
 
 ## Authentication
 
@@ -84,42 +74,3 @@ Example response:
   "allowed": true
 }
 ```
-
-## Composite Rate Limiting (**NEW**)
-
-For advanced scenarios requiring multiple algorithm combinations:
-
-```bash
-# Enterprise SaaS with API calls + bandwidth limits
-curl -X POST http://localhost:8080/api/ratelimit/check \
-  -H "Content-Type: application/json" \
-  -d '{
-    "key": "enterprise:customer:123",
-    "algorithm": "COMPOSITE",
-    "tokens": 1,
-    "compositeConfig": {
-      "limits": [
-        {"name": "api_calls", "algorithm": "TOKEN_BUCKET", "capacity": 1000, "refillRate": 100},
-        {"name": "bandwidth", "algorithm": "LEAKY_BUCKET", "capacity": 50, "refillRate": 5}
-      ],
-      "combinationLogic": "ALL_MUST_PASS"
-    }
-  }'
-```
-
-Enhanced response with component details:
-```json
-{
-  "allowed": true,
-  "componentResults": {
-    "api_calls": {"allowed": true, "currentTokens": 999, "capacity": 1000},
-    "bandwidth": {"allowed": true, "currentTokens": 49, "capacity": 50}
-  },
-  "combinationResult": {
-    "logic": "ALL_MUST_PASS",
-    "overallScore": 1.0
-  }
-}
-```
-
-See [Composite Rate Limiting Examples](../../examples/composite-rate-limiting.md) for comprehensive usage scenarios.
