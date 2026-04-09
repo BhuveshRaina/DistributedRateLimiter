@@ -1,0 +1,84 @@
+services:
+  # The Redis "Source of Truth"
+  redis:
+    image: redis:7-alpine
+    container_name: drl-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  # TIER 1: The Traffic Generator (Simulates real users)
+  generator:
+    build: ./backend-generator
+    container_name: drl-generator
+    environment:
+      - RATELIMITER_LOADBALANCER_URL=http://loadbalancer
+      - RATELIMITER_REDIS_ENABLED=false 
+      - RATELIMITER_SECURITY_API_KEYS_ENABLED=false
+    restart: unless-stopped
+
+  # TIER 2: The Rate Limit Workers (The Data Plane)
+  worker1:
+    build: ./backend-worker
+    container_name: drl-worker-1
+    environment:
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PORT=6379
+      - RATELIMITER_SECURITY_API_KEYS_ENABLED=false
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  worker2:
+    build: ./backend-worker
+    container_name: drl-worker-2
+    environment:
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PORT=6379
+      - RATELIMITER_SECURITY_API_KEYS_ENABLED=false
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  worker3:
+    build: ./backend-worker
+    container_name: drl-worker-3
+    environment:
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PORT=6379
+      - RATELIMITER_SECURITY_API_KEYS_ENABLED=false
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # TIER 3: The Management Node (The Control Plane)
+  manager:
+    build: ./backend-manager
+    container_name: drl-manager
+    environment:
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PORT=6379
+      - RATELIMITER_SECURITY_API_KEYS_ENABLED=false
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Nginx Load Balancer
+  loadbalancer:
+    build:
+      context: .
+      dockerfile: Dockerfile.nginx
+    container_name: drl-lb
+    ports:
+      - "8081:80"
+    depends_on:
+      - generator
+      - worker1
+      - worker2
+      - worker3
+      - manager
+    restart: unless-stopped
+
+networks:
+  default:
+    name: drl-network
