@@ -51,8 +51,9 @@ public class ConfigurationResolver {
         // 1. Get Base Config First to check toggle
         RateLimitConfig base = getBaseConfig(key);
 
-        // 2. Adaptive Override (only if enabled)
-        if (adaptiveEngine != null && base.isAdaptiveEnabled()) {
+        // 2. Adaptive Override (only if enabled and NOT a pattern)
+        // We check if the key exists in the specific keys map to ensure it's not a pattern match
+        if (adaptiveEngine != null && base.isAdaptiveEnabled() && isSpecificKey(key)) {
             AdaptiveRateLimitEngine.AdaptedLimits adapted = adaptiveEngine.getAdaptedLimits(key);
             if (adapted != null) {
                 return new RateLimitConfig(adapted.adaptedCapacity, adapted.adaptedRefillRate, base.getCleanupIntervalMs(), base.getAlgorithm(), true);
@@ -193,5 +194,19 @@ public class ConfigurationResolver {
             keys.addAll(configRepository.loadPatternConfigs().keySet());
         }
         return keys;
-    }    public String resolveBaseKey(String key) { return key; }
+    }
+
+    /**
+     * Returns only specific, exact keys (excluding patterns) for adaptive processing.
+     */
+    public java.util.Set<String> getSpecificKeysOnly() {
+        java.util.Set<String> keys = new java.util.HashSet<>();
+        keys.addAll(localConfiguration.getKeys().keySet());
+        if (configRepository != null) {
+            keys.addAll(configRepository.loadKeyConfigs().keySet());
+        }
+        return keys;
+    }
+
+    public String resolveBaseKey(String key) { return key; }
 }

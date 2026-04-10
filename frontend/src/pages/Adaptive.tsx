@@ -37,9 +37,6 @@ import {
   Info,
   Edit3,
   X,
-  Trash2,
-  Lock,
-  Globe,
 } from "lucide-react";
 import { toast } from "sonner";
 import { rateLimiterApi } from "@/services/rateLimiterApi";
@@ -51,7 +48,6 @@ const Adaptive = () => {
   const [loading, setLoading] = useState(true);
   const [config, setConfig] = useState<AdaptiveConfig | null>(null);
   const [adaptiveStatuses, setAdaptiveStatuses] = useState<AdaptiveStatus[]>([]);
-  const [adaptiveTargets, setAdaptiveTargets] = useState<{ target: string; isPattern: boolean }[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
@@ -63,14 +59,12 @@ const Adaptive = () => {
 
   const loadData = useCallback(async () => {
     try {
-      const [configData, statusesData, targetsData] = await Promise.all([
+      const [configData, statusesData] = await Promise.all([
         rateLimiterApi.getAdaptiveConfig(),
         rateLimiterApi.getAdaptiveStatusForAllKeys(),
-        rateLimiterApi.getAdaptiveTargets(),
       ]);
       setConfig(configData);
       setAdaptiveStatuses(statusesData);
-      setAdaptiveTargets(targetsData);
     } catch (error) {
       console.error("Failed to load adaptive data:", error);
       toast.error("Failed to load adaptive rate limiting data");
@@ -95,9 +89,8 @@ const Adaptive = () => {
 
   const handleToggleAdaptation = async (key: string, currentEnabled: boolean) => {
     try {
-      // Find if it's a pattern or a simple key by looking at targets
-      const target = adaptiveTargets.find(t => t.target === key);
-      const isPattern = target ? target.isPattern : key.includes("*");
+      // We are working on perfect keys only, so we can simplify this
+      const isPattern = key.includes("*");
       
       // Get current status to preserve other settings
       const status = adaptiveStatuses.find(s => s.key === key);
@@ -120,17 +113,6 @@ const Adaptive = () => {
     } catch (error) {
       console.error("Failed to toggle adaptation:", error);
       toast.error("Failed to update adaptation state");
-    }
-  };
-
-  const handleRemoveTarget = async (target: string) => {
-    try {
-      await rateLimiterApi.removeAdaptiveTarget(target);
-      toast.success(`Removed adaptive target: ${target}`);
-      await loadData();
-    } catch (error) {
-      console.error("Failed to remove target:", error);
-      toast.error("Failed to remove adaptive target");
     }
   };
 
@@ -332,45 +314,6 @@ const Adaptive = () => {
         </Card>
       </div>
 
-      {/* Adaptive Target Management */}
-      <Card className="p-6">
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="text-lg font-semibold flex items-center gap-2">
-            <Zap className="h-5 w-5" />
-            Configured Adaptations
-          </h3>
-        </div>
-
-        {adaptiveTargets.length === 0 ? (
-          <div className="text-center py-8 border-2 border-dashed rounded-lg">
-            <Zap className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-            <p className="text-muted-foreground">No explicit adaptive targets defined</p>
-            <p className="text-xs text-muted-foreground">The system will still learn from active traffic.</p>
-          </div>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {adaptiveTargets.map((target) => (
-              <div key={target.target} className="flex items-center justify-between p-3 border rounded-lg bg-card hover:shadow-sm transition-shadow">
-                <div className="flex items-center gap-3 overflow-hidden">
-                  <div className={`p-2 rounded-full ${target.isPattern ? 'bg-purple-500/10' : 'bg-blue-500/10'}`}>
-                    {target.isPattern ? <Globe className="h-4 w-4 text-purple-600" /> : <Lock className="h-4 w-4 text-blue-600" />}
-                  </div>
-                  <div className="overflow-hidden">
-                    <p className="font-mono text-sm font-semibold truncate" title={target.target}>{target.target}</p>
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold">
-                      {target.isPattern ? 'Pattern' : 'Actual Key'}
-                    </p>
-                  </div>
-                </div>
-                <Button variant="ghost" size="icon" onClick={() => handleRemoveTarget(target.target)} className="text-muted-foreground hover:text-destructive">
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-
       {/* Keys Table */}
       <Card className="p-6">
         <div className="flex items-center justify-between mb-4">
@@ -408,8 +351,6 @@ const Adaptive = () => {
               </TableHeader>
               <TableBody>
                 {adaptiveStatuses.map((status) => {
-                  const isExplicitTarget = adaptiveTargets.some(t => t.target === status.key);
-                  const isPatternMatch = !isExplicitTarget && adaptiveTargets.some(t => t.isPattern && status.key.match(new RegExp('^' + t.target.replace(/\*/g, '.*') + '$')));
                   const isOverride = status.adaptiveStatus.mode === "OVERRIDE";
                   const isDisabled = status.adaptiveStatus.mode === "DISABLED";
                   
@@ -419,8 +360,6 @@ const Adaptive = () => {
                         <div className="flex flex-col">
                           <div className="flex items-center gap-2">
                             <span className="font-semibold">{status.displayName}</span>
-                            {isExplicitTarget && <Badge variant="outline" className="text-[9px] h-4 border-blue-500 text-blue-500">Target</Badge>}
-                            {isPatternMatch && <Badge variant="outline" className="text-[9px] h-4 border-purple-500 text-purple-500">Matched</Badge>}
                             {isOverride && <Badge className="gap-1 bg-orange-500 text-[9px] h-4"><Shield className="h-3 w-3" />Override</Badge>}
                             {isDisabled && <Badge variant="secondary" className="text-[9px] h-4">Paused</Badge>}
                           </div>

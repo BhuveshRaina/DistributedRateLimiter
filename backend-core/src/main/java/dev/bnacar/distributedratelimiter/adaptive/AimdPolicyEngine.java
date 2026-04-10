@@ -8,26 +8,108 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * AIMD-based Policy Engine for rate limit optimization.
- * Uses System Health and User Metrics to apply Additive Increase / Multiplicative Decrease logic.
+ * FORMAL SYSTEM DESIGN: DISTRIBUTED MULTI-FACTOR ADAPTIVE RATE LIMITER
+ * 
+ * Implements a mathematically driven control system with:
+ * 1. Multi-Factor Stress Score (CPU, RAM, Latency, Error Rate)
+ * 2. Proportional Control (Error E = Stress - 0.75 Target)
+ * 3. Statistical Fairness (Z-Score normalization)
+ * 4. AIMD Logic (Scaled Additive Increase / Multiplicative Decrease)
  */
 @Component
 public class AimdPolicyEngine {
     
     private static final Logger logger = LoggerFactory.getLogger(AimdPolicyEngine.class);
     
+    // Control Constants
+    private static final double TARGET_STRESS = 0.75;
+    private static final double PANIC_THRESHOLD = 0.95;
+    private static final double ALPHA_GROWTH_FACTOR = 10.0;
+    private static final double BETA_PENALTY_FACTOR = 1.5;
+    
+    // SLO Normalization Constants
+    private static final double LATENCY_SLO_MS = 1000.0; // 1s P95 latency = 100% stress
+    private static final double ERROR_RATE_SLO = 0.20;   // 20% error rate = 100% stress
+    
+    // Clamping Constants
+    private static final int MIN_CAPACITY = 5;
+    private static final int MIN_REFILL = 2;
+
     /**
-     * Determine adaptation decision based on system health and user metrics.
+     * Determine adaptation decision using Multi-Factor Stress and Z-Score Fairness.
      */
     public AdaptationDecision determineAdaptation(SystemHealth health,
                                      UserMetrics userMetrics,
                                      int currentCapacity,
                                      int currentRefillRate) {
         
-        // Generate decision using rule-based logic
-        DecisionOutput output = makeRuleBasedDecision(health, userMetrics, currentCapacity, currentRefillRate);
+        // --- PHASE 1: CALCULATE MULTI-FACTOR STRESS SCORE ---
+        double hardwareStress = Math.max(health.getCpuUtilization(), health.getMemoryUtilization());
+        double latencyStress = Math.min(1.0, health.getResponseTimeP95() / LATENCY_SLO_MS);
+        double errorStress = Math.min(1.0, health.getErrorRate() / ERROR_RATE_SLO);
         
-        Map<String, String> reasoning = generateReasoning(health, userMetrics, output);
+        // Global Stress is the maximum of all normalized factors
+        double currentStress = Math.max(hardwareStress, Math.max(latencyStress, errorStress));
+        double error = currentStress - TARGET_STRESS;
+        
+        DecisionOutput output = new DecisionOutput();
+        output.capacity = currentCapacity;
+        output.refillRate = currentRefillRate;
+        output.confidence = 1.0;
+        output.shouldAdapt = true;
+
+        // --- PHASE 2: THE CIRCUIT BREAKER (PANIC MODE) ---
+        if (currentStress >= PANIC_THRESHOLD) {
+            output.capacity = MIN_CAPACITY;
+            output.refillRate = MIN_REFILL;
+            output.reason = String.format("CRITICAL: System Stress at %.0f%% (HW:%.0f%%, Lat:%.0f%%, Err:%.0f%%). Circuit breaker triggered.", 
+                            currentStress * 100, hardwareStress * 100, latencyStress * 100, errorStress * 100);
+            return buildDecision(output, currentStress, health, userMetrics);
+        }
+
+        // --- PHASE 3: MULTIPLICATIVE DECREASE (SYSTEM STRESSED) ---
+        if (error > 0) {
+            // Formula: Multiplier = max(0.1, 1 - (Beta * E * max(1, Z_i)))
+            double intensity = Math.max(1.0, userMetrics.getZScore());
+            double multiplier = Math.max(0.1, 1.0 - (BETA_PENALTY_FACTOR * error * intensity));
+            
+            output.capacity = Math.max(MIN_CAPACITY, (int) Math.round(currentCapacity * multiplier));
+            output.refillRate = Math.max(MIN_REFILL, (int) Math.round(currentRefillRate * multiplier));
+            
+            String role = userMetrics.getZScore() > 1.0 ? "NOISY NEIGHBOR" : "NORMAL USER";
+            output.reason = String.format("STRESSED: System over target by %.1f%%. Multiplicative Decrease applied to %s (Z=%.2f, Multiplier=%.2f)", 
+                            error * 100, role, userMetrics.getZScore(), multiplier);
+        } 
+        
+        // --- PHASE 4: ADDITIVE INCREASE (SYSTEM HEALTHY) ---
+        else if (error < 0) {
+            // Formula: Growth_Step = Alpha * |E|
+            double growthStep = ALPHA_GROWTH_FACTOR * Math.abs(error);
+            
+            output.capacity = currentCapacity + (int) Math.round(growthStep);
+            output.refillRate = currentRefillRate + (int) Math.round(growthStep / 5.0);
+            
+            output.reason = String.format("HEALTHY: System under target by %.1f%%. Additive Increase applied (Growth=+%.1f)", 
+                            Math.abs(error) * 100, growthStep);
+        }
+        
+        // --- PHASE 5: HOLD STATE (EQUILIBRIUM) ---
+        else {
+            output.shouldAdapt = false;
+            output.reason = "EQUILIBRIUM: System exactly at 75% target. Holding current limits.";
+        }
+
+        return buildDecision(output, currentStress, health, userMetrics);
+    }
+
+    private AdaptationDecision buildDecision(DecisionOutput output, double stress, SystemHealth health, UserMetrics userMetrics) {
+        Map<String, String> reasoning = new HashMap<>();
+        reasoning.put("decision", output.reason);
+        reasoning.put("systemMetrics", String.format("Global Stress: %.1f%% (CPU:%.0f%%, RAM:%.0f%%, P95:%.0fms, Err:%.1f%%)", 
+                      stress * 100, health.getCpuUtilization() * 100, health.getMemoryUtilization() * 100,
+                      health.getResponseTimeP95(), health.getErrorRate() * 100));
+        reasoning.put("userMetrics", String.format("RPS: %.2f, Z-Score: %.2f", 
+                      userMetrics.getCurrentRequestRate(), userMetrics.getZScore()));
         
         return AdaptationDecision.builder()
             .shouldAdapt(output.shouldAdapt)
@@ -38,95 +120,6 @@ public class AimdPolicyEngine {
             .build();
     }
     
-    /**
-     * Make rule-based decision focusing on System Health and User Metrics using AIMD principle.
-     * AIMD: Additive Increase / Multiplicative Decrease
-     */
-    private DecisionOutput makeRuleBasedDecision(SystemHealth health, 
-                                                 UserMetrics userMetrics,
-                                                 int currentCapacity,
-                                                 int currentRefillRate) {
-        
-        DecisionOutput output = new DecisionOutput();
-        output.capacity = currentCapacity;
-        output.refillRate = currentRefillRate;
-        output.confidence = 1.0; 
-        output.shouldAdapt = false;
-        
-        // --- 1. MULTIPLICATIVE DECREASE (MD) ---
-        // Triggered ONLY by System Stress to protect infrastructure.
-        
-        // CRITICAL STRESS: CPU > 80% or Latency > 1s
-        if (health.getCpuUtilization() > 0.8 || health.getResponseTimeP95() > 1000) {
-            output.shouldAdapt = true;
-            output.capacity = Math.max(10, (int) (currentCapacity * 0.5)); // 50% cut
-            output.refillRate = Math.max(2, (int) (currentRefillRate * 0.5));
-            output.reason = "CRITICAL: System stress detected (CPU/Latency) - Multiplicative Decrease Applied (-50%)";
-            return output;
-        }
-
-        // MODERATE STRESS: CPU > 60% 
-        if (health.getCpuUtilization() > 0.6) {
-            output.shouldAdapt = true;
-            output.capacity = Math.max(10, (int) (currentCapacity * 0.8)); // 20% cut
-            output.refillRate = Math.max(2, (int) (currentRefillRate * 0.8));
-            output.reason = "NOTICE: Moderate system stress detected - Multiplicative Decrease Applied (-20%)";
-            return output;
-        }
-        
-        // --- 2. ADDITIVE INCREASE (AI) ---
-        // Triggered when System is Healthy to maximize throughput and meet user demand.
-        
-        // HEALTHY: CPU < 40% and low Error Rate
-        if (health.getCpuUtilization() < 0.4 && health.getErrorRate() < 0.01) {
-            output.shouldAdapt = true;
-            output.capacity = currentCapacity + 10; // Fixed Additive Increase
-            output.refillRate = currentRefillRate + 2;
-            
-            // Context-aware reasoning
-            if (userMetrics.getDenialRate() > 0.05) {
-                output.reason = "HEALTHY: System has headroom and user is hitting limits - Additive Increase Applied to meet demand";
-            } else {
-                output.reason = "HEALTHY: System stable - Additive Increase Applied to probe capacity";
-            }
-            return output;
-        }
-        
-        // --- 3. STABLE ---
-        output.reason = "STABLE: System metrics within normal range, maintaining current limits";
-        return output;
-    }
-    
-    /**
-     * Generate human-readable reasoning.
-     */
-    private Map<String, String> generateReasoning(SystemHealth health,
-                                                  UserMetrics userMetrics,
-                                                  DecisionOutput output) {
-        Map<String, String> reasoning = new HashMap<>();
-        
-        reasoning.put("decision", output.reason);
-        
-        // System metrics
-        reasoning.put("systemMetrics", 
-            String.format("CPU: %.1f%%, Memory: %.1f%%, P95: %.0fms, Error Rate: %.3f%%",
-                         health.getCpuUtilization() * 100,
-                         health.getMemoryUtilization() * 100,
-                         health.getResponseTimeP95(),
-                         health.getErrorRate() * 100));
-        
-        // User metrics
-        reasoning.put("userMetrics",
-            String.format("Request Rate: %.2f req/s, Denial Rate: %.1f%%",
-                         userMetrics.getCurrentRequestRate(),
-                         userMetrics.getDenialRate() * 100));
-        
-        return reasoning;
-    }
-    
-    /**
-     * Decision output holder.
-     */
     private static class DecisionOutput {
         boolean shouldAdapt;
         int capacity;

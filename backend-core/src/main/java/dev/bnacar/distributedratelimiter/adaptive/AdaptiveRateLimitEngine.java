@@ -22,7 +22,7 @@ import java.util.stream.Collectors;
 
 /**
  * DISTRIBUTED Adaptive Rate Limiting Engine.
- * Uses Redis to sync adaptations and targets across the whole cluster.
+ * Highly optimized with Pipelined Redis operations for enterprise-scale.
  */
 @Service
 public class AdaptiveRateLimitEngine {
@@ -30,7 +30,6 @@ public class AdaptiveRateLimitEngine {
     private static final Logger logger = LoggerFactory.getLogger(AdaptiveRateLimitEngine.class);
     private static final String ADAPTED_LIMITS_KEY = "ratelimiter:adaptive:limits";
     private static final String TRACKED_KEYS_SET = "ratelimiter:adaptive:tracked";
-    private static final String ADAPTIVE_TARGETS_KEY = "ratelimiter:adaptive:targets";
     
     private final SystemMetricsCollector metricsCollector;
     private final UserMetricsModeler userMetricsModeler;
@@ -72,27 +71,38 @@ public class AdaptiveRateLimitEngine {
         this.maxCapacity = maxCapacity;
     }
 
-    @Scheduled(fixedRateString = "${ratelimiter.adaptive.evaluation-interval-ms:30000}")
+    @Scheduled(fixedRateString = "${ratelimiter.adaptive.evaluation-interval-ms:5000}")
     public void evaluateAdaptations() {
         if (!enabled || redisTemplate == null) return;
         syncWithConfiguration();
         
-        // Configuration is the single source of truth. 
-        // Iterate through all configured keys and patterns and evaluate those with adaptiveEnabled=true.
         Set<String> allConfigKeys = configurationResolver.getValidConfigKeys();
-        for (String key : allConfigKeys) {
+        Set<String> specificKeys = configurationResolver.getSpecificKeysOnly();
+        
+        // --- PHASE 1: COLLECT EVERYTHING IN ONE NETWORK CALL (Zero N+1) ---
+        // Use allConfigKeys for the global stats to ensure patterns contribute to the mean RPS
+        Map<String, UserMetrics> allMetrics = userMetricsModeler.fetchAndCalculateAllMetrics(allConfigKeys);
+
+        // --- PHASE 2: EVALUATE INDIVIDUAL KEYS (Entirely In-Memory!) ---
+        // Only loop through SPECIFIC keys. Patterns are excluded from individual adaptation.
+        for (String key : specificKeys) {
             RateLimitConfig config = configurationResolver.getBaseConfig(key);
             if (config != null && config.isAdaptiveEnabled()) {
-                evaluateKey(key);
+                
+                // Get pre-calculated metrics
+                UserMetrics userMetrics = allMetrics.getOrDefault(key, 
+                    UserMetrics.builder().currentRequestRate(0).denialRate(0).zScore(1.0).build());
+
+                evaluateKey(key, userMetrics);
             }
         }
     }
 
-    private void evaluateKey(String key) { 
+    private void evaluateKey(String key, UserMetrics userMetrics) { 
         AdaptedLimits current = getAdaptedLimits(key); 
         if (current != null && "Manual override".equals(current.reasoning.get("decision"))) return;
         try {
-            AdaptationDecision decision = generateAdaptationDecision(key);
+            AdaptationDecision decision = generateAdaptationDecision(key, userMetrics, current);
             if (decision.shouldAdapt() && decision.getConfidence() >= minConfidenceThreshold) {
                 applyAdaptation(key, decision);
             }
@@ -101,8 +111,7 @@ public class AdaptiveRateLimitEngine {
         }
     }
 
-    private AdaptationDecision generateAdaptationDecision(String key) {
-        AdaptedLimits current = getAdaptedLimits(key);
+    private AdaptationDecision generateAdaptationDecision(String key, UserMetrics userMetrics, AdaptedLimits current) {
         int baseCapacity, baseRefillRate;
         
         if (current != null) {
@@ -113,9 +122,9 @@ public class AdaptiveRateLimitEngine {
             baseCapacity = config.getCapacity();
             baseRefillRate = config.getRefillRate();
         }
-        
+
         return policyEngine.determineAdaptation(metricsCollector.getCurrentHealth(), 
-                                              userMetricsModeler.getUserMetrics(key), 
+                                              userMetrics, 
                                               baseCapacity, baseRefillRate);
     }
     
@@ -152,7 +161,6 @@ public class AdaptiveRateLimitEngine {
     public void recordTrafficEvent(String key, int tokens, boolean allowed) {
         if (!enabled || redisTemplate == null) return; 
         
-        // Only sync with configuration occasionally to reduce overhead
         if (eventCounter.incrementAndGet() % 100 == 0) {
             syncWithConfiguration();
         }
@@ -190,7 +198,6 @@ public class AdaptiveRateLimitEngine {
     public Map<String, AdaptiveStatusInfo> getAllStatuses() {
         if (redisTemplate == null) return new HashMap<>();
         
-        // Return status for ALL keys found in the configuration
         Set<String> allConfigKeys = configurationResolver.getValidConfigKeys();
         Map<String, AdaptiveStatusInfo> results = new HashMap<>();
         
@@ -223,14 +230,11 @@ public class AdaptiveRateLimitEngine {
         redisTemplate.opsForSet().remove(TRACKED_KEYS_SET, key);
     }
 
-    // --- RESTORED METHODS FOR TARGET MANAGEMENT ---
-
     public void addAdaptiveTarget(String target, boolean isPattern, Integer capacity, Integer refillRate) {
         if (redisTemplate == null) return;
         AdaptiveTarget targetObj = new AdaptiveTarget(target, isPattern);
         redisTemplate.opsForHash().put(ADAPTIVE_TARGETS_KEY, target, targetObj);
         
-        // Update configuration to enable adaptive for this key
         RateLimitConfig current = configurationResolver.getBaseConfig(target);
         RateLimitConfig updated = new RateLimitConfig(
             capacity != null ? capacity : (current != null ? current.getCapacity() : 10),
@@ -250,7 +254,6 @@ public class AdaptiveRateLimitEngine {
     public void removeAdaptiveTarget(String target) {
         if (redisTemplate == null) return;
         
-        // Instead of deleting the configuration, we just disable the adaptive flag
         RateLimitConfig current = configurationResolver.getBaseConfig(target);
         if (current != null) {
             RateLimitConfig updated = new RateLimitConfig(
@@ -261,10 +264,7 @@ public class AdaptiveRateLimitEngine {
                 false // Disable adaptive
             );
             
-            // Check if it's a pattern or key (this is a bit heuristic here)
-            // But usually, configurationResolver will handle it based on what exists
             configurationResolver.updateKeyConfig(target, updated);
-            // Also try pattern just in case
             configurationResolver.updatePatternConfig(target, updated);
         }
         
@@ -340,16 +340,13 @@ public class AdaptiveRateLimitEngine {
         public String getTarget() { return target; }
         public boolean isPattern() { return isPattern; }
     }
+    
     private void syncWithConfiguration() {
         try {
-            // Get all keys currently in Adaptive state
             Map<Object, Object> adaptedEntries = redisTemplate.opsForHash().entries(ADAPTED_LIMITS_KEY);
             Map<Object, Object> targetEntries = redisTemplate.opsForHash().entries(ADAPTIVE_TARGETS_KEY);
-            
-            // Get valid keys from Configuration
             Set<String> validKeys = configurationResolver.getValidConfigKeys();
             
-            // Cleanup adapted limits that don't have a config anymore
             for (Object keyObj : adaptedEntries.keySet()) {
                 String key = keyObj.toString();
                 if (!validKeys.contains(key) && !key.startsWith("benchmark")) {
@@ -358,7 +355,6 @@ public class AdaptiveRateLimitEngine {
                 }
             }
             
-            // Cleanup targets that don't have a config anymore
             for (Object keyObj : targetEntries.keySet()) {
                 String key = keyObj.toString();
                 if (!validKeys.contains(key)) {
