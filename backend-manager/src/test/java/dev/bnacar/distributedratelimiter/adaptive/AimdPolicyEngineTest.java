@@ -16,77 +16,85 @@ class AimdPolicyEngineTest {
 
     @Test
     void testPanicMode_HardwareStress() {
-        // CPU at 96%
+        // CPU at 99%
         SystemHealth health = SystemHealth.builder()
-            .cpuUtilization(0.96)
+            .cpuUtilization(0.99)
             .build();
         UserMetrics metrics = UserMetrics.builder().zScore(1.0).build();
 
-        AdaptationDecision decision = policyEngine.determineAdaptation(health, metrics, 100, 20);
+        // N=5 users
+        AdaptationDecision decision = policyEngine.determineAdaptation(health, metrics, 100, 20, 100, 20, 5);
 
         assertTrue(decision.shouldAdapt());
-        assertEquals(5, decision.getRecommendedCapacity());
-        assertTrue(decision.getReasoning().get("decision").contains("System Stress at 96%"));
+        // Panic mode applies 0.5 geometric cut
+        assertEquals(50, decision.getRecommendedCapacity());
+        assertTrue(decision.getReasoning().get("decision").contains("PANIC"));
     }
 
     @Test
-    void testPanicMode_LatencyStress() {
-        // Latency at 1000ms (1.0 stress)
+    void testMultiplicativeDecrease_Outlier() {
+        // System is stressed: CPU = 80% (10% above target 0.70)
         SystemHealth health = SystemHealth.builder()
-            .cpuUtilization(0.10)
-            .responseTimeP95(1000.0)
+            .cpuUtilization(0.80)
             .build();
-        UserMetrics metrics = UserMetrics.builder().zScore(1.0).build();
+        
+        // User is an outlier: Z=2.0 (Intensity = 2.0 > 0.5)
+        UserMetrics metrics = UserMetrics.builder()
+            .zScore(2.0)
+            .build();
 
-        AdaptationDecision decision = policyEngine.determineAdaptation(health, metrics, 100, 20);
+        // E = 0.8 - 0.7 = 0.1
+        // Tax = 1 + 2.0 = 3.0
+        // Mult = 1 - (0.3 * 0.1 * 3.0) = 1 - 0.09 = 0.91
+        // 100 * 0.91 = 91
+        AdaptationDecision decision = policyEngine.determineAdaptation(health, metrics, 100, 20, 100, 20, 5);
 
         assertTrue(decision.shouldAdapt());
-        assertEquals(5, decision.getRecommendedCapacity());
-        assertTrue(decision.getReasoning().get("decision").contains("Lat:100%"));
+        assertEquals(91, decision.getRecommendedCapacity());
+        assertTrue(decision.getReasoning().get("decision").contains("MD applied"));
     }
 
     @Test
-    void testMultiplicativeDecrease_NoisyNeighbor_ErrorRateStress() {
-        // CPU low (20%), but Error Rate high (10% which is 0.50 stress score)
-        // Wait, 0.50 stress is below 0.75 target, so it would INCREASE.
-        // Let's make error rate 17% (0.85 stress score, which is 10% over target 0.75)
+    void testMultiplicativeDecrease_SharedSacrifice() {
+        // System is stressed due to Traffic: Latency = 1600ms (80% stress)
+        SystemHealth health = SystemHealth.builder()
+            .responseTimeP95(1600.0)
+            .build();
+        
+        // User is normal: Z=0.0
+        UserMetrics metrics = UserMetrics.builder()
+            .zScore(0.0)
+            .build();
+
+        // E = 0.8 - 0.7 = 0.1
+        // sTraffic = 0.8 > 0.7. Tax = 0.5.
+        // Mult = 1 - (0.3 * 0.1 * 0.5) = 1 - 0.015 = 0.985
+        // 100 * 0.985 = 98.5 -> 99
+        AdaptationDecision decision = policyEngine.determineAdaptation(health, metrics, 100, 20, 100, 20, 5);
+
+        assertTrue(decision.shouldAdapt());
+        assertEquals(99, decision.getRecommendedCapacity());
+    }
+
+    @Test
+    void testAdditiveIncrease_HealthySystem() {
+        // System is fast (100ms P95 = 0.05 stress)
+        // CPU 20% (0.2 stress)
         SystemHealth health = SystemHealth.builder()
             .cpuUtilization(0.20)
-            .errorRate(0.17) // 17% / 20% = 0.85 stress
-            .build();
-        UserMetrics metrics = UserMetrics.builder()
-            .zScore(3.0)
-            .currentRequestRate(50.0)
-            .build();
-
-        // Error = 0.85 - 0.75 = 0.10
-        // Formula: Multiplier = max(0.1, 1 - (1.5 * 0.1 * 3.0)) = 1 - 0.45 = 0.55
-        AdaptationDecision decision = policyEngine.determineAdaptation(health, metrics, 100, 20);
-
-        assertTrue(decision.shouldAdapt());
-        assertEquals(55, decision.getRecommendedCapacity());
-        assertTrue(decision.getReasoning().get("decision").contains("NOISY NEIGHBOR"));
-    }
-
-    @Test
-    void testAdditiveIncrease_LowLatencySystem() {
-        // System is very fast (100ms P95 = 0.1 stress)
-        // CPU 40% (0.4 stress)
-        SystemHealth health = SystemHealth.builder()
-            .cpuUtilization(0.40)
             .responseTimeP95(100.0)
             .build();
         UserMetrics metrics = UserMetrics.builder()
             .zScore(1.0)
             .build();
 
-        // Max Stress = 0.4
-        // Error = 0.4 - 0.75 = -0.35
-        // Growth = 10 * |-0.35| = 3.5 -> round to 4
-        AdaptationDecision decision = policyEngine.determineAdaptation(health, metrics, 100, 20);
+        // U_curr = 0.2
+        // E = 0.2 - 0.7 = -0.5
+        // Growth = 5 * 0.5 = 2.5 -> 3
+        AdaptationDecision decision = policyEngine.determineAdaptation(health, metrics, 100, 20, 100, 20, 5);
 
         assertTrue(decision.shouldAdapt());
-        assertEquals(104, decision.getRecommendedCapacity()); // 100 + 4
-        assertTrue(decision.getReasoning().get("decision").contains("HEALTHY"));
+        assertEquals(103, decision.getRecommendedCapacity());
+        assertTrue(decision.getReasoning().get("decision").contains("AI applied"));
     }
 }

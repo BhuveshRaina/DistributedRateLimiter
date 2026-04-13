@@ -41,12 +41,6 @@ public class DistributedRateLimiterService extends RateLimiterService {
         
         RateLimitConfig config = configurationResolver.resolveConfig(sharedKey);
         
-        AdaptiveRateLimitEngine.AdaptedLimits adapted = adaptiveEngine.getAdaptedLimits(sharedKey);
-        if (adapted != null) {
-            config = new RateLimitConfig(adapted.adaptedCapacity, adapted.adaptedRefillRate, 
-                                       config.getCleanupIntervalMs(), config.getAlgorithm());
-        }
-        
         // DEBUG LOGGING
         logger.info("Checking limit for key {}: Algorithm={}, Capacity={}, Refill={}", 
                     sharedKey, config.getAlgorithm(), config.getCapacity(), config.getRefillRate());
@@ -65,6 +59,15 @@ public class DistributedRateLimiterService extends RateLimiterService {
             }
             
             result = rateLimiter.tryConsumeWithResult(tokens);
+            
+            // SHADOW MODE LOGIC
+            if (config.isShadowMode()) {
+                if (!result.allowed) {
+                    logger.info("[SHADOW MODE] Key {} would have been rate limited. Allowing anyway.", sharedKey);
+                }
+                // Override the result to always allow, but keep original tokens remaining
+                result = new RateLimiter.ConsumptionResult(true, result.remainingTokens);
+            }
         } catch (Exception ex) {
             result = new RateLimiter.ConsumptionResult(false, -1);
         }
@@ -74,6 +77,11 @@ public class DistributedRateLimiterService extends RateLimiterService {
             if (result.allowed) metricsService.recordAllowedRequest(sharedKey, config.getAlgorithm(), tokens);
             else metricsService.recordDeniedRequest(sharedKey, config.getAlgorithm(), tokens);
             metricsService.recordProcessingTime(sharedKey, config.getAlgorithm(), processingTime);
+        }
+        
+        // REPORT TRAFFIC TO ADAPTIVE ENGINE
+        if (adaptiveEngine != null) {
+            adaptiveEngine.recordTrafficEvent(sharedKey, tokens, result.allowed);
         }
         
         return result;

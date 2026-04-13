@@ -8,114 +8,137 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * FORMAL SYSTEM DESIGN: DISTRIBUTED MULTI-FACTOR ADAPTIVE RATE LIMITER
- * 
- * Implements a mathematically driven control system with:
- * 1. Multi-Factor Stress Score (CPU, RAM, Latency, Error Rate)
- * 2. Proportional Control (Error E = Stress - 0.75 Target)
- * 3. Statistical Fairness (Z-Score normalization)
- * 4. AIMD Logic (Scaled Additive Increase / Multiplicative Decrease)
+ * Enhanced AimdPolicyEngine - Final alignment with Formal Spec and Log Transparency.
  */
 @Component
 public class AimdPolicyEngine {
     
     private static final Logger logger = LoggerFactory.getLogger(AimdPolicyEngine.class);
     
-    // Control Constants
-    private static final double TARGET_STRESS = 0.75;
-    private static final double PANIC_THRESHOLD = 0.95;
-    private static final double ALPHA_GROWTH_FACTOR = 10.0;
-    private static final double BETA_PENALTY_FACTOR = 1.5;
+    // simulation thresholds
+    private static final double U_TARGET = 0.70; // Target 70% System CPU
+    private static final double PANIC_THRESHOLD = 0.85; // Panic at 85% System CPU
+    private static final double ALPHA = 10.0; 
+    private static final double BETA = 1.0;  
     
-    // SLO Normalization Constants
-    private static final double LATENCY_SLO_MS = 1000.0; // 1s P95 latency = 100% stress
-    private static final double ERROR_RATE_SLO = 0.20;   // 20% error rate = 100% stress
+    private static final double SLO_LATENCY_MS = 100.0; 
+    private static final double SLO_ERROR_RATE = 0.05;
     
-    // Clamping Constants
-    private static final int MIN_CAPACITY = 5;
-    private static final int MIN_REFILL = 2;
+    private static final int L_MIN = 10;
 
-    /**
-     * Determine adaptation decision using Multi-Factor Stress and Z-Score Fairness.
-     */
     public AdaptationDecision determineAdaptation(SystemHealth health,
                                      UserMetrics userMetrics,
-                                     int currentCapacity,
-                                     int currentRefillRate) {
+                                     int lOld,
+                                     int rOld,
+                                     int lBase,
+                                     int rBase,
+                                     int activeUserCount) {
         
-        // --- PHASE 1: CALCULATE MULTI-FACTOR STRESS SCORE ---
-        double hardwareStress = Math.max(health.getCpuUtilization(), health.getMemoryUtilization());
-        double latencyStress = Math.min(1.0, health.getResponseTimeP95() / LATENCY_SLO_MS);
-        double errorStress = Math.min(1.0, health.getErrorRate() / ERROR_RATE_SLO);
+        // --- PHASE 1: TELEMETRY NORMALIZATION ---
+        double sCpu = health.getCpuUtilization();
+        double sLat = Math.min(1.0, health.getResponseTimeP95() / SLO_LATENCY_MS);
+        double sErr = Math.min(1.0, health.getErrorRate() / SLO_ERROR_RATE);
         
-        // Global Stress is the maximum of all normalized factors
-        double currentStress = Math.max(hardwareStress, Math.max(latencyStress, errorStress));
-        double error = currentStress - TARGET_STRESS;
-        
+        double sTraffic = Math.max(sLat, sErr);
+        double uCurrent = Math.max(sCpu, sTraffic);
+        double e = uCurrent - U_TARGET;
+
+        // --- PHASE 2: STATISTICAL PROFILING ---
+        double zScore = userMetrics.getZScore();
+        double intensity = (activeUserCount < 3) ? 0.0 : Math.max(0.0, zScore);
+
         DecisionOutput output = new DecisionOutput();
-        output.capacity = currentCapacity;
-        output.refillRate = currentRefillRate;
-        output.confidence = 1.0;
+        output.capacity = lOld;
+        output.refillRate = rOld;
         output.shouldAdapt = true;
 
-        // --- PHASE 2: THE CIRCUIT BREAKER (PANIC MODE) ---
-        if (currentStress >= PANIC_THRESHOLD) {
-            output.capacity = MIN_CAPACITY;
-            output.refillRate = MIN_REFILL;
-            output.reason = String.format("CRITICAL: System Stress at %.0f%% (HW:%.0f%%, Lat:%.0f%%, Err:%.0f%%). Circuit breaker triggered.", 
-                            currentStress * 100, hardwareStress * 100, latencyStress * 100, errorStress * 100);
-            return buildDecision(output, currentStress, health, userMetrics);
-        }
+        // --- PHASE 3: THE AIMD CONTROL LAW ---
 
-        // --- PHASE 3: MULTIPLICATIVE DECREASE (SYSTEM STRESSED) ---
-        if (error > 0) {
-            // Formula: Multiplier = max(0.1, 1 - (Beta * E * max(1, Z_i)))
-            double intensity = Math.max(1.0, userMetrics.getZScore());
-            double multiplier = Math.max(0.1, 1.0 - (BETA_PENALTY_FACTOR * error * intensity));
-            
-            output.capacity = Math.max(MIN_CAPACITY, (int) Math.round(currentCapacity * multiplier));
-            output.refillRate = Math.max(MIN_REFILL, (int) Math.round(currentRefillRate * multiplier));
-            
-            String role = userMetrics.getZScore() > 1.0 ? "NOISY NEIGHBOR" : "NORMAL USER";
-            output.reason = String.format("STRESSED: System over target by %.1f%%. Multiplicative Decrease applied to %s (Z=%.2f, Multiplier=%.2f)", 
-                            error * 100, role, userMetrics.getZScore(), multiplier);
+        // A. Panic Mode (Extreme Stress across all dimensions)
+        if (uCurrent >= PANIC_THRESHOLD && sTraffic > 0.9) {
+            output.capacity = (int) (lOld * 0.50);
+            output.refillRate = (int) (rOld * 0.50);
+            output.reason = "PANIC";
+        }
+        
+        // B. Multiplicative Decrease
+        else if (e > 0) {
+            double tax = 0.0;
+            if (intensity > 0.5) {
+                tax = 1.0 + intensity; // PUNITIVE: Crushing the villain
+            } else if (intensity > 0.0 || sTraffic > 0.7) {
+                tax = 0.5; // SHARED SACRIFICE: Light warning for noisy users
+            }
+
+            if (tax > 0) {
+                double m = 1.0 - (BETA * e * tax);
+                double mSafe = Math.max(0.80, m); 
+                output.capacity = (int) Math.round(lOld * mSafe);
+                output.refillRate = (int) Math.round(rOld * mSafe);
+                output.reason = "DECREASE";
+            } else {
+                output.shouldAdapt = false;
+                output.reason = "HOLD";
+            }
         } 
         
-        // --- PHASE 4: ADDITIVE INCREASE (SYSTEM HEALTHY) ---
-        else if (error < 0) {
-            // Formula: Growth_Step = Alpha * |E|
-            double growthStep = ALPHA_GROWTH_FACTOR * Math.abs(error);
-            
-            output.capacity = currentCapacity + (int) Math.round(growthStep);
-            output.refillRate = currentRefillRate + (int) Math.round(growthStep / 5.0);
-            
-            output.reason = String.format("HEALTHY: System under target by %.1f%%. Additive Increase applied (Growth=+%.1f)", 
-                            Math.abs(error) * 100, growthStep);
+        // C. Slow Start (Exponential Recovery to Base)
+        else if (uCurrent < U_TARGET && lOld < lBase) {
+            // Ramping up exponentially (25% growth) until we hit the SLA/Base
+            double m = 1.25; 
+            output.capacity = Math.min(lBase, (int) Math.ceil(lOld * m));
+            output.refillRate = Math.min(rBase, (int) Math.ceil(rOld * m));
+            output.reason = "RECOVERING";
         }
         
-        // --- PHASE 5: HOLD STATE (EQUILIBRIUM) ---
+        // D. Additive Increase (Scaling up beyond base)
+        else if (e < 0 && uCurrent < U_TARGET) {
+            double growth = ALPHA * Math.abs(e);
+            double growthSafe = Math.min(growth, lOld * 0.10); 
+            output.capacity = lOld + (int) Math.round(growthSafe);
+            output.refillRate = rOld + (int) Math.round(growthSafe / 5.0);
+            output.reason = "INCREASE";
+        }
+        
+        // E. Equilibrium
         else {
             output.shouldAdapt = false;
-            output.reason = "EQUILIBRIUM: System exactly at 75% target. Holding current limits.";
+            output.reason = "EQUILIBRIUM";
         }
 
-        return buildDecision(output, currentStress, health, userMetrics);
+        // --- PHASE 4: FINAL SAFEGUARDS (CEILING & FLOOR) ---
+        int lCeiling = (int) (lBase * 2.0);
+        int rCeiling = (int) (rBase * 2.0);
+        
+        int finalCap = Math.min(lCeiling, Math.max(L_MIN, output.capacity));
+        int finalRefill = Math.min(rCeiling, Math.max(2, output.refillRate));
+
+        // LOG FINAL DECISION
+        if (output.shouldAdapt && (finalCap != lOld || finalRefill != rOld)) {
+            logger.info("[TRANSITION] -> {}: {}/{} -> {}/{} (U={}%, Z={})", 
+                output.reason, lOld, rOld, finalCap, finalRefill, 
+                Math.round(uCurrent * 100), String.format("%.2f", zScore));
+        }
+
+        output.capacity = finalCap;
+        output.refillRate = finalRefill;
+
+        return buildDecision(output, uCurrent, health, userMetrics, zScore);
     }
 
-    private AdaptationDecision buildDecision(DecisionOutput output, double stress, SystemHealth health, UserMetrics userMetrics) {
+    private AdaptationDecision buildDecision(DecisionOutput output, double u, SystemHealth h, UserMetrics m, double z) {
         Map<String, String> reasoning = new HashMap<>();
         reasoning.put("decision", output.reason);
-        reasoning.put("systemMetrics", String.format("Global Stress: %.1f%% (CPU:%.0f%%, RAM:%.0f%%, P95:%.0fms, Err:%.1f%%)", 
-                      stress * 100, health.getCpuUtilization() * 100, health.getMemoryUtilization() * 100,
-                      health.getResponseTimeP95(), health.getErrorRate() * 100));
-        reasoning.put("userMetrics", String.format("RPS: %.2f, Z-Score: %.2f", 
-                      userMetrics.getCurrentRequestRate(), userMetrics.getZScore()));
+        reasoning.put("telemetry", String.format("U=%d%%, CPU=%d%%, Lat=%.2fms, Err=%d%%", 
+            Math.round(u * 100), Math.round(h.getCpuUtilization() * 100), 
+            h.getResponseTimeP95(), Math.round(h.getErrorRate() * 100)));
+        reasoning.put("profile", String.format("RPS=%.1f, Z=%.2f", m.getCurrentRequestRate(), z));
         
         return AdaptationDecision.builder()
             .shouldAdapt(output.shouldAdapt)
             .recommendedCapacity(output.capacity)
             .recommendedRefillRate(output.refillRate)
-            .confidence(output.confidence)
+            .confidence(1.0)
             .reasoning(reasoning)
             .build();
     }
@@ -124,7 +147,6 @@ public class AimdPolicyEngine {
         boolean shouldAdapt;
         int capacity;
         int refillRate;
-        double confidence;
         String reason;
     }
 }

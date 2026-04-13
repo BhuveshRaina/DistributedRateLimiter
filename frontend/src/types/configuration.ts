@@ -14,6 +14,7 @@ export interface KeyConfig {
   refillRate: number;
   algorithm: ConfigAlgorithm;
   adaptiveEnabled: boolean;
+  shadowMode: boolean;
   effectiveCapacity?: number;
   effectiveRefillRate?: number;
   createdAt: string;
@@ -27,6 +28,7 @@ export interface PatternConfig {
   refillRate: number;
   algorithm: ConfigAlgorithm;
   adaptiveEnabled: boolean;
+  shadowMode: boolean;
   effectiveCapacity?: number;
   effectiveRefillRate?: number;
   description: string;

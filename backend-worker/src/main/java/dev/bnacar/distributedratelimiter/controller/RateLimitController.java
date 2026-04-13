@@ -10,6 +10,7 @@ import dev.bnacar.distributedratelimiter.ratelimit.RateLimitConfig;
 import dev.bnacar.distributedratelimiter.ratelimit.RateLimitAlgorithm;
 import dev.bnacar.distributedratelimiter.ratelimit.ConfigurationResolver;
 import dev.bnacar.distributedratelimiter.security.ApiKeyService;
+import dev.bnacar.distributedratelimiter.monitoring.MetricsService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -46,6 +47,7 @@ public class RateLimitController {
     private final ApiKeyService apiKeyService;
     private final AdaptiveRateLimitEngine adaptiveEngine;
     private final ConfigurationResolver configurationResolver;
+    private final MetricsService metricsService;
     
     @Value("${ratelimiter.adaptive.enabled:true}")
     private boolean adaptiveRateLimitingEnabled;
@@ -56,11 +58,13 @@ public class RateLimitController {
     public RateLimitController(RateLimiterService rateLimiterService,
                               ApiKeyService apiKeyService,
                               AdaptiveRateLimitEngine adaptiveEngine,
-                              ConfigurationResolver configurationResolver) {
+                              ConfigurationResolver configurationResolver,
+                              MetricsService metricsService) {
         this.rateLimiterService = rateLimiterService;
         this.apiKeyService = apiKeyService;
         this.adaptiveEngine = adaptiveEngine;
         this.configurationResolver = configurationResolver;
+        this.metricsService = metricsService;
     }
 
     @PostMapping("/check")
@@ -93,44 +97,50 @@ public class RateLimitController {
             @Valid @RequestBody RateLimitRequest request,
             HttpServletRequest httpRequest) {
         
-        // Validate API key if provided or required
-        if (!apiKeyService.isValidApiKey(request.getApiKey())) {
-            RateLimitResponse response = new RateLimitResponse(request.getKey(), request.getTokens(), false);
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
-        }
-        
-        // Use the raw key provided in the request
-        String effectiveKey = request.getKey();
-        
-        // Standard single-algorithm rate limiting
-        RateLimiter.ConsumptionResult result = rateLimiterService.isAllowedWithResult(effectiveKey, request.getTokens(), request.getAlgorithm());
-        boolean allowed = result.allowed;
-        
-        // Record traffic event for adaptive learning
-        if (adaptiveRateLimitingEnabled) {
-            adaptiveEngine.recordTrafficEvent(effectiveKey, request.getTokens(), allowed);
-        }
-        
-        // Build adaptive info if enabled
-        AdaptiveInfo adaptiveInfo = null;
-        if (adaptiveRateLimitingEnabled) {
-            adaptiveInfo = buildAdaptiveInfo(effectiveKey);
-        }
-        
-        RateLimitResponse response = new RateLimitResponse(request.getKey(), request.getTokens(), allowed, result.remainingTokens, result.capacity, adaptiveInfo);
-        
-        // Record the algorithm actually used for the response
-        RateLimitAlgorithm usedAlgorithm = request.getAlgorithm();
-        if (usedAlgorithm == null) {
-            RateLimitConfig config = rateLimiterService.getKeyConfiguration(effectiveKey);
-            usedAlgorithm = config != null ? config.getAlgorithm() : RateLimitAlgorithm.TOKEN_BUCKET;
-        }
-        response.setAlgorithm(usedAlgorithm.name());
-        
-        if (allowed) {
-            return ResponseEntity.ok(response);
-        } else {
-            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(response);
+        try {
+            // Validate API key if provided or required
+            if (!apiKeyService.isValidApiKey(request.getApiKey())) {
+                RateLimitResponse response = new RateLimitResponse(request.getKey(), request.getTokens(), false);
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
+            }
+            
+            // Use the raw key provided in the request
+            String effectiveKey = request.getKey();
+            
+            // Standard single-algorithm rate limiting
+            RateLimiter.ConsumptionResult result = rateLimiterService.isAllowedWithResult(effectiveKey, request.getTokens(), request.getAlgorithm());
+            boolean allowed = result.allowed;
+            
+            // Record traffic event for adaptive learning
+            if (adaptiveRateLimitingEnabled) {
+                adaptiveEngine.recordTrafficEvent(effectiveKey, request.getTokens(), allowed);
+            }
+            
+            // Build adaptive info if enabled
+            AdaptiveInfo adaptiveInfo = null;
+            if (adaptiveRateLimitingEnabled) {
+                adaptiveInfo = buildAdaptiveInfo(effectiveKey);
+            }
+            
+            RateLimitResponse response = new RateLimitResponse(request.getKey(), request.getTokens(), allowed, result.remainingTokens, result.capacity, adaptiveInfo);
+            
+            // Record the algorithm actually used for the response
+            RateLimitAlgorithm usedAlgorithm = request.getAlgorithm();
+            if (usedAlgorithm == null) {
+                RateLimitConfig config = rateLimiterService.getKeyConfiguration(effectiveKey);
+                usedAlgorithm = config != null ? config.getAlgorithm() : RateLimitAlgorithm.TOKEN_BUCKET;
+            }
+            response.setAlgorithm(usedAlgorithm.name());
+            
+            if (allowed) {
+                return ResponseEntity.ok(response);
+            } else {
+                return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(response);
+            }
+        } catch (Exception e) {
+            metricsService.recordFailure();
+            logger.error("Rate limit check failed for key: {}", request.getKey(), e);
+            throw e;
         }
     }
     

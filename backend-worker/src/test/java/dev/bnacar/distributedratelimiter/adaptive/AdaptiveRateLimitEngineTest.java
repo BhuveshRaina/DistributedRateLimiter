@@ -85,7 +85,7 @@ class AdaptiveRateLimitEngineTest {
             .reasoning(Map.of("decision", "HEALTHY"))
             .build();
         
-        when(policyEngine.determineAdaptation(eq(health), eq(userMetrics), anyInt(), anyInt()))
+        when(policyEngine.determineAdaptation(eq(health), eq(userMetrics), anyInt(), anyInt(), anyInt(), anyInt(), anyInt()))
             .thenReturn(decision);
 
         // Execute

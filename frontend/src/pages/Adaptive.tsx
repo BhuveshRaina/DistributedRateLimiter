@@ -97,8 +97,8 @@ const Adaptive = () => {
       if (!status) return;
 
       const config = {
-        capacity: status.currentLimits.capacity,
-        refillRate: status.currentLimits.refillRate,
+        capacity: status.originalLimits.capacity,
+        refillRate: status.originalLimits.refillRate,
         adaptiveEnabled: !currentEnabled
       };
 
@@ -371,7 +371,9 @@ const Adaptive = () => {
                       <TableCell>
                         <div className="text-sm">
                           <div>Capacity: <span className="font-medium">{status.currentLimits.capacity}</span></div>
-                          <div>Refill: <span className="font-medium">{status.currentLimits.refillRate}/s</span></div>
+                          {status.currentLimits.refillRate > 0 && (
+                            <div>Refill: <span className="font-medium">{status.currentLimits.refillRate}/s</span></div>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell className="max-w-xs">
@@ -445,15 +447,17 @@ const Adaptive = () => {
                                       onChange={(e) => setOverrideForm({ ...overrideForm, capacity: parseInt(e.target.value, 10) || 0 })}
                                     />
                                   </div>
-                                  <div className="grid gap-2">
-                                    <Label htmlFor="refillRate">Refill Rate (per second)</Label>
-                                    <Input
-                                      id="refillRate"
-                                      type="number"
-                                      value={overrideForm.refillRate}
-                                      onChange={(e) => setOverrideForm({ ...overrideForm, refillRate: parseInt(e.target.value, 10) || 0 })}
-                                    />
-                                  </div>
+                                  {status.currentLimits.refillRate > 0 && (
+                                    <div className="grid gap-2">
+                                      <Label htmlFor="refillRate">Refill Rate (per second)</Label>
+                                      <Input
+                                        id="refillRate"
+                                        type="number"
+                                        value={overrideForm.refillRate}
+                                        onChange={(e) => setOverrideForm({ ...overrideForm, refillRate: parseInt(e.target.value, 10) || 0 })}
+                                      />
+                                    </div>
+                                  )}
                                   <div className="grid gap-2">
                                     <Label htmlFor="reason">Reason</Label>
                                     <Textarea

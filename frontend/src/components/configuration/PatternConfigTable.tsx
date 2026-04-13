@@ -21,7 +21,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Plus, Edit, Trash2, Search, Sparkles, Brain } from "lucide-react";
+import { Plus, Edit, Trash2, Search, Sparkles, Brain, Ghost } from "lucide-react";
 import { PatternConfig } from "@/types/configuration";
 import { PatternConfigModal } from "./PatternConfigModal";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -55,6 +55,11 @@ export const PatternConfigTable = ({ configs, onAdd, onEdit, onDelete }: Pattern
   const handleToggleAdaptive = (config: PatternConfig) => {
     const { id, createdAt, updatedAt, ...rest } = config;
     onEdit(id, { ...rest, adaptiveEnabled: !config.adaptiveEnabled });
+  };
+
+  const handleToggleShadow = (config: PatternConfig) => {
+    const { id, createdAt, updatedAt, ...rest } = config;
+    onEdit(id, { ...rest, shadowMode: !config.shadowMode });
   };
 
   const handleAdd = (config: Omit<PatternConfig, "id" | "createdAt" | "updatedAt">) => {
@@ -125,6 +130,7 @@ export const PatternConfigTable = ({ configs, onAdd, onEdit, onDelete }: Pattern
                 <TableHead>Refill Rate</TableHead>
                 <TableHead>Algorithm</TableHead>
                 <TableHead>Adaptive</TableHead>
+                <TableHead>Shadow</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -147,7 +153,7 @@ export const PatternConfigTable = ({ configs, onAdd, onEdit, onDelete }: Pattern
                       <TableCell>
                         <div className="flex flex-col">
                           <span>{config.capacity}</span>
-                          {config.effectiveCapacity !== undefined && config.effectiveCapacity !== config.capacity && (
+                          {config.adaptiveEnabled && config.effectiveCapacity !== undefined && (
                             <span className="text-[10px] text-primary font-bold">Live: {config.effectiveCapacity}</span>
                           )}
                         </div>
@@ -158,7 +164,7 @@ export const PatternConfigTable = ({ configs, onAdd, onEdit, onDelete }: Pattern
                         ) : (
                           <div className="flex flex-col">
                             <span>{config.refillRate}</span>
-                            {config.effectiveRefillRate !== undefined && config.effectiveRefillRate !== config.refillRate && (
+                            {config.adaptiveEnabled && config.effectiveRefillRate !== undefined && (
                               <span className="text-[10px] text-primary font-bold">Live: {config.effectiveRefillRate}</span>
                             )}
                           </div>
@@ -174,6 +180,15 @@ export const PatternConfigTable = ({ configs, onAdd, onEdit, onDelete }: Pattern
                             onCheckedChange={() => handleToggleAdaptive(config)}
                           />
                           <Brain className={`h-4 w-4 ${config.adaptiveEnabled ? 'text-primary' : 'text-muted-foreground/30'}`} />
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Switch
+                            checked={config.shadowMode}
+                            onCheckedChange={() => handleToggleShadow(config)}
+                          />
+                          <Ghost className={`h-4 w-4 ${config.shadowMode ? 'text-orange-500' : 'text-muted-foreground/30'}`} />
                         </div>
                       </TableCell>
                     <TableCell className="text-right">

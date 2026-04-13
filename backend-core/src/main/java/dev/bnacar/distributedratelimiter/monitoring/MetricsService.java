@@ -49,6 +49,7 @@ public class MetricsService {
     // These global totals will be primarily managed in Redis, but kept in-memory copies for faster dashboard reads.
     private final AtomicLong totalAllowedRequests = new AtomicLong(0);
     private final AtomicLong totalDeniedRequests = new AtomicLong(0);
+    private final AtomicLong totalFailures = new AtomicLong(0);
     private final AtomicLong totalProcessingTimeMs = new AtomicLong(0);
 
     // Algorithm metrics are updated frequently, so keep in-memory for speed
@@ -123,9 +124,11 @@ public class MetricsService {
         if (globalData != null && !globalData.isEmpty()) {
             totalAllowedRequests.set(getLongValue(globalData.get("totalAllowedRequests")));
             totalDeniedRequests.set(getLongValue(globalData.get("totalDeniedRequests")));
+            totalFailures.set(getLongValue(globalData.get("totalFailures")));
             totalProcessingTimeMs.set(getLongValue(globalData.get("totalProcessingTimeMs")));
         }
-        logger.info("Loaded global metrics from Redis. Allowed: {}, Denied: {}", totalAllowedRequests.get(), totalDeniedRequests.get());
+        logger.debug("Loaded global metrics from Redis. Allowed: {}, Denied: {}, Failures: {}", 
+            totalAllowedRequests.get(), totalDeniedRequests.get(), totalFailures.get());
     }
     
     private long getLongValue(Object value) {
@@ -184,8 +187,16 @@ public class MetricsService {
         Map<String, String> globalData = new HashMap<>();
         globalData.put("totalAllowedRequests", String.valueOf(totalAllowedRequests.get()));
         globalData.put("totalDeniedRequests", String.valueOf(totalDeniedRequests.get()));
+        globalData.put("totalFailures", String.valueOf(totalFailures.get()));
         globalData.put("totalProcessingTimeMs", String.valueOf(totalProcessingTimeMs.get()));
         redisTemplate.opsForHash().putAll(GLOBAL_METRICS_KEY, globalData);
+    }
+
+    public void recordFailure() {
+        totalFailures.incrementAndGet();
+        if (redisTemplate != null) {
+            redisTemplate.opsForHash().increment(GLOBAL_METRICS_KEY, "totalFailures", 1);
+        }
     }
 
     public void recordAllowedRequest(String key, RateLimitAlgorithm algorithm) {
@@ -344,10 +355,11 @@ public class MetricsService {
                 }
             }
 
-            Set<String> activeKeyNames = redisTemplate.keys(ACTIVE_KEYS_PREFIX + "*");
-            if (activeKeyNames != null && !activeKeyNames.isEmpty()) {
-                for (String fullKey : activeKeyNames) {
-                    String key = fullKey.substring(ACTIVE_KEYS_PREFIX.length());
+            // Use the tracked keys set instead of expensive KEYS * scan
+            Set<Object> activeKeyObjects = redisTemplate.opsForSet().members("ratelimiter:adaptive:tracked");
+            if (activeKeyObjects != null && !activeKeyObjects.isEmpty()) {
+                for (Object keyObj : activeKeyObjects) {
+                    String key = keyObj.toString();
                     String keyMetricsHash = KEY_METRICS_PREFIX + key;
                     Map<Object, Object> keyData = redisTemplate.opsForHash().entries(keyMetricsHash);
                     
@@ -376,7 +388,8 @@ public class MetricsService {
 
             cachedMetrics = new MetricsResponse(
                 metrics, algoResults, events, redisConnected,
-                totalAllowedRequests.get(), totalDeniedRequests.get(), totalProcessingTimeMs.get()
+                totalAllowedRequests.get(), totalDeniedRequests.get(), totalProcessingTimeMs.get(),
+                totalFailures.get()
             );
             lastCacheTime = now;
             
@@ -408,7 +421,8 @@ public class MetricsService {
 
         return new MetricsResponse(
             metrics, algoResults, new java.util.ArrayList<>(recentEvents),
-            redisConnected, totalAllowedRequests.get(), totalDeniedRequests.get(), totalProcessingTimeMs.get()
+            redisConnected, totalAllowedRequests.get(), totalDeniedRequests.get(), totalProcessingTimeMs.get(),
+            totalFailures.get()
         );
     }
 

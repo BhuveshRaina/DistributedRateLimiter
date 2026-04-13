@@ -23,6 +23,7 @@ export interface AdaptiveStatus {
   displayName: string;
   adaptiveEnabled: boolean;
   currentLimits: CurrentLimits;
+  originalLimits: CurrentLimits;
   adaptiveStatus: AdaptiveStatusInfo;
   timestamp: string;
 }

@@ -130,8 +130,8 @@ public class ConfigurationResolver {
         kc.setAdaptiveEnabled(config.isAdaptiveEnabled());
         localConfiguration.putKey(key, kc);
         
-        // If we just turned adaptive OFF, clear any stored adaptive limits immediately
-        if (adaptiveEngine != null && !config.isAdaptiveEnabled()) {
+        // Clear stored adaptive limits whenever we toggle the mode to ensure a fresh start
+        if (adaptiveEngine != null) {
             adaptiveEngine.removeOverride(key);
         }
         
@@ -146,8 +146,8 @@ public class ConfigurationResolver {
         kc.setAdaptiveEnabled(config.isAdaptiveEnabled());
         localConfiguration.putPattern(pattern, kc);
         
-        // If we just turned adaptive OFF, clear any stored adaptive limits immediately
-        if (adaptiveEngine != null && !config.isAdaptiveEnabled()) {
+        // Clear stored adaptive limits whenever we toggle the mode to ensure a fresh start
+        if (adaptiveEngine != null) {
             adaptiveEngine.removeOverride(pattern);
         }
         
@@ -177,6 +177,14 @@ public class ConfigurationResolver {
     }
 
     public int getCacheSize() { return configCache.size(); }
+
+    private boolean isSpecificKey(String key) {
+        if (localConfiguration.getKeys().containsKey(key)) return true;
+        if (configRepository != null) {
+            return configRepository.loadKeyConfigs().containsKey(key);
+        }
+        return false;
+    }
 
     private boolean matchesPattern(String key, String pattern) {
         if (pattern.equals("*")) return true;

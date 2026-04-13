@@ -58,10 +58,10 @@ public class ScheduleManagerService {
     public void evaluateSchedules() {
         syncFromRedis();
         Instant now = Instant.now();
-        logger.info("Evaluating schedules at {}", now);
+        logger.debug("Evaluating schedules at {}", now);
         
         List<RateLimitSchedule> activeSchedules = findActiveSchedules(now);
-        logger.info("Found {} active schedules", activeSchedules.size());
+        logger.debug("Found {} active schedules", activeSchedules.size());
         
         activeScheduleConfigs.clear();
         

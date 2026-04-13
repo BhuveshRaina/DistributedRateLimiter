@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Robust Scenario-based tests for the Adaptive Rate Limiting Module.
  * These tests verify the complex interactions between Multi-Factor Stress, 
- * Z-Score statistical fairness, and AIMD clamping.
+ * Z-Score statistical fairness, and AIMD clamping based on the Formal Spec.
  */
 class AdaptiveModuleRobustTest {
 
@@ -23,10 +23,10 @@ class AdaptiveModuleRobustTest {
     @Test
     @DisplayName("Scenario: High Latency Stress + Noisy Neighbor Isolation")
     void testNoisyNeighborIsolation_UnderLatencyStress() {
-        // System is slow: P95 = 850ms (85% stress, 10% above target)
+        // System is slow: P95 = 1600ms (80% stress, 10% above target 0.70)
         SystemHealth health = SystemHealth.builder()
             .cpuUtilization(0.30)
-            .responseTimeP95(850.0)
+            .responseTimeP95(1600.0)
             .build();
 
         // User A: Normal user (RPS matches mean, Z=0)
@@ -35,21 +35,21 @@ class AdaptiveModuleRobustTest {
         // User B: Noisy Neighbor (RPS far above mean, Z=4.0)
         UserMetrics userB = UserMetrics.builder().zScore(4.0).currentRequestRate(100.0).build();
 
-        // Calculate decisions
-        AdaptationDecision decisionA = policyEngine.determineAdaptation(health, userA, 100, 20);
-        AdaptationDecision decisionB = policyEngine.determineAdaptation(health, userB, 100, 20);
+        // Calculate decisions (N=5 users to enable Z-score logic)
+        AdaptationDecision decisionA = policyEngine.determineAdaptation(health, userA, 100, 20, 100, 20, 5);
+        AdaptationDecision decisionB = policyEngine.determineAdaptation(health, userB, 100, 20, 100, 20, 5);
 
         // Analysis for User A (Normal):
-        // Error = 0.10, Intensity = max(1, 0) = 1.0
-        // Multiplier = 1 - (1.5 * 0.10 * 1.0) = 0.85 (15% cut)
-        assertEquals(85, decisionA.getRecommendedCapacity());
+        // U = 0.80, E = 0.10. Intensity = 0. sTraffic = 0.8 > 0.7. Tax = 0.5.
+        // Mult = 1 - (0.3 * 0.1 * 0.5) = 0.985
+        assertEquals(99, decisionA.getRecommendedCapacity());
 
         // Analysis for User B (Noisy):
-        // Error = 0.10, Intensity = max(1, 4.0) = 4.0
-        // Multiplier = 1 - (1.5 * 0.10 * 4.0) = 1 - 0.60 = 0.40 (60% cut)
-        assertEquals(40, decisionB.getRecommendedCapacity());
+        // U = 0.80, E = 0.10. Intensity = 4.0. Tax = 1 + 4 = 5.0.
+        // Mult = 1 - (0.3 * 0.1 * 5.0) = 0.85
+        assertEquals(85, decisionB.getRecommendedCapacity());
 
-        // Assert that the noisy neighbor was penalized 4x more than the normal user
+        // Assert that the noisy neighbor was penalized significantly more
         assertTrue(decisionB.getRecommendedCapacity() < decisionA.getRecommendedCapacity());
     }
 
@@ -62,26 +62,28 @@ class AdaptiveModuleRobustTest {
             .errorRate(0.18) 
             .build();
 
+        // N=5 users
         UserMetrics metrics = UserMetrics.builder().zScore(1.0).build();
 
-        AdaptationDecision decision = policyEngine.determineAdaptation(health, metrics, 100, 20);
+        AdaptationDecision decision = policyEngine.determineAdaptation(health, metrics, 100, 20, 100, 20, 5);
 
-        // Global Stress should be 90% (from error rate), not 80% (from CPU)
-        // Error = 0.90 - 0.75 = 0.15
-        // Multiplier = 1 - (1.5 * 0.15 * 1.0) = 1 - 0.225 = 0.775 -> round to 0.78
-        // 100 * 0.78 = 78
-        assertEquals(78, decision.getRecommendedCapacity());
-        assertTrue(decision.getReasoning().get("decision").contains("STRESSED"));
+        // Global Stress should be 90% (from error rate)
+        // E = 0.90 - 0.70 = 0.20
+        // Intensity = 1.0. Tax = 1 + 1 = 2.0.
+        // Mult = 1 - (0.3 * 0.20 * 2.0) = 1 - 0.12 = 0.88
+        // 100 * 0.88 = 88
+        assertEquals(88, decision.getRecommendedCapacity());
+        assertTrue(decision.getReasoning().get("decision").contains("MD applied"));
     }
 
     @Test
     @DisplayName("Scenario: Convergence to Equilibrium")
     void testEquilibrium_NoAdaptationNeeded() {
-        // System at exactly 75% Target Stress
-        SystemHealth health = SystemHealth.builder().cpuUtilization(0.75).build();
+        // System at exactly 70% Target Stress
+        SystemHealth health = SystemHealth.builder().cpuUtilization(0.70).build();
         UserMetrics metrics = UserMetrics.builder().zScore(1.0).build();
 
-        AdaptationDecision decision = policyEngine.determineAdaptation(health, metrics, 100, 20);
+        AdaptationDecision decision = policyEngine.determineAdaptation(health, metrics, 100, 20, 100, 20, 5);
 
         assertFalse(decision.shouldAdapt());
         assertEquals(100, decision.getRecommendedCapacity());
@@ -94,62 +96,56 @@ class AdaptiveModuleRobustTest {
         SystemHealth health = SystemHealth.builder().cpuUtilization(0.90).build();
         UserMetrics metrics = UserMetrics.builder().zScore(10.0).build(); // Huge spammer
 
-        // User already at 6 tokens (near MIN_CAPACITY = 5)
-        AdaptationDecision decision = policyEngine.determineAdaptation(health, metrics, 6, 2);
+        // User already at 11 tokens (near L_MIN = 10)
+        AdaptationDecision decision = policyEngine.determineAdaptation(health, metrics, 11, 2, 100, 20, 5);
 
-        // Even with huge error and Z-score, it shouldn't drop to 0
-        assertEquals(5, decision.getRecommendedCapacity());
-        assertEquals(2, decision.getRecommendedRefillRate());
+        // Even with huge error and Z-score, it shouldn't drop below 10
+        assertEquals(10, decision.getRecommendedCapacity());
     }
 
     @Test
-    @DisplayName("Scenario: High Memory Stress")
-    void testMemoryStress_TriggersDecrease() {
-        // CPU is fine (10%), but Memory is at 85% (10% over target)
-        SystemHealth health = SystemHealth.builder()
-            .cpuUtilization(0.10)
-            .memoryUtilization(0.85)
-            .build();
-        UserMetrics metrics = UserMetrics.builder().zScore(1.0).build();
-
-        AdaptationDecision decision = policyEngine.determineAdaptation(health, metrics, 100, 20);
-
-        // Error = 0.10 -> Multiplier = 0.85
-        assertEquals(85, decision.getRecommendedCapacity());
-        assertTrue(decision.getReasoning().get("systemMetrics").contains("RAM:85%"));
-    }
-
-    @Test
-    @DisplayName("Scenario: Multi-Factor Panic Mode (Any factor > 95%)")
+    @DisplayName("Scenario: Panic Mode (Any factor > 95%)")
     void testMultiFactorPanicMode() {
-        // Everything else is fine, but Error Rate is 20% (100% stress)
+        // CPU is extremely high (99%)
         SystemHealth health = SystemHealth.builder()
-            .cpuUtilization(0.10)
-            .memoryUtilization(0.10)
-            .responseTimeP95(100.0)
-            .errorRate(0.20) // 20% / 20% SLO = 1.0 (Panic!)
+            .cpuUtilization(0.99)
             .build();
         UserMetrics metrics = UserMetrics.builder().zScore(1.0).build();
 
-        AdaptationDecision decision = policyEngine.determineAdaptation(health, metrics, 100, 20);
+        AdaptationDecision decision = policyEngine.determineAdaptation(health, metrics, 100, 20, 100, 20, 5);
 
-        // Instant reset to minimums
-        assertEquals(5, decision.getRecommendedCapacity());
-        assertEquals(2, decision.getRecommendedRefillRate());
-        assertTrue(decision.getReasoning().get("decision").contains("CRITICAL"));
+        // Instant 50% geometric cut
+        assertEquals(50, decision.getRecommendedCapacity());
+        assertEquals(10, decision.getRecommendedRefillRate());
+        assertTrue(decision.getReasoning().get("decision").contains("PANIC"));
     }
 
     @Test
-    @DisplayName("Scenario: Zero Activity Fallback")
+    @DisplayName("Scenario: Zero Activity AI")
     void testZeroActivity_NeutralZScore() {
-        // System healthy, but no users active
-        SystemHealth health = SystemHealth.builder().cpuUtilization(0.50).build();
-        // RPS=0 results in StdDev issues in some implementations, but our Z-Score logic should be safe
+        // System healthy (20% CPU)
+        SystemHealth health = SystemHealth.builder().cpuUtilization(0.20).build();
         UserMetrics metrics = UserMetrics.builder().zScore(0.0).currentRequestRate(0.0).build();
 
-        AdaptationDecision decision = policyEngine.determineAdaptation(health, metrics, 100, 20);
+        // Current capacity is 100, base is 100.
+        // E = 0.20 - 0.70 = -0.50. Growth = 5 * 0.5 = 2.5 -> round to 3.
+        AdaptationDecision decision = policyEngine.determineAdaptation(health, metrics, 100, 20, 100, 20, 5);
 
-        // Error = -0.25 -> Growth = 10 * 0.25 = 2.5 -> round to 3
         assertEquals(103, decision.getRecommendedCapacity());
+    }
+
+    @Test
+    @DisplayName("Scenario: Fast Recovery (Reset Rule)")
+    void testFastRecovery() {
+        // System perfectly healthy (20% CPU)
+        SystemHealth health = SystemHealth.builder().cpuUtilization(0.20).build();
+        UserMetrics metrics = UserMetrics.builder().zScore(0.0).currentRequestRate(5.0).build();
+
+        // Throttled to 50, but Base is 100
+        AdaptationDecision decision = policyEngine.determineAdaptation(health, metrics, 50, 10, 100, 20, 5);
+
+        // Should jump back to 100 instantly
+        assertEquals(100, decision.getRecommendedCapacity());
+        assertTrue(decision.getReasoning().get("decision").contains("RESET"));
     }
 }

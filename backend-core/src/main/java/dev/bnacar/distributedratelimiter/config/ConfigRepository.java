@@ -105,7 +105,7 @@ public class ConfigRepository {
         if (map.containsKey("adaptiveEnabled")) {
             config.setAdaptiveEnabled((Boolean) map.get("adaptiveEnabled"));
         } else {
-            config.setAdaptiveEnabled(true);
+            config.setAdaptiveEnabled(false);
         }
         if (map.containsKey("cleanupIntervalMs")) config.setCleanupIntervalMs(((Number) map.get("cleanupIntervalMs")).longValue());
         if (map.containsKey("algorithm")) config.setAlgorithm(RateLimitAlgorithm.valueOf((String) map.get("algorithm")));

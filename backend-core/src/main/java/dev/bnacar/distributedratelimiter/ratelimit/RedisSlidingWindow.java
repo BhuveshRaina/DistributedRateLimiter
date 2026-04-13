@@ -16,15 +16,13 @@ public class RedisSlidingWindow implements RateLimiter {
     
     private final String key;
     private final int capacity;
-    private final int refillRate;
     private final long windowSizeMs;
     private final RedisTemplate<String, Object> redisTemplate;
     private final RedisScript<List> slidingWindowScript;
     
     public RedisSlidingWindow(String key, int capacity, int refillRate, RedisTemplate<String, Object> redisTemplate) {
         this.key = "sliding_window:" + key;
-        this.capacity = Math.max(capacity, refillRate);
-        this.refillRate = refillRate;
+        this.capacity = capacity;
         this.windowSizeMs = 1000; // 1 second sliding window
         this.redisTemplate = redisTemplate;
         
@@ -125,7 +123,7 @@ public class RedisSlidingWindow implements RateLimiter {
     
     @Override
     public int getRefillRate() {
-        return refillRate;
+        return 0;
     }
     
     @Override

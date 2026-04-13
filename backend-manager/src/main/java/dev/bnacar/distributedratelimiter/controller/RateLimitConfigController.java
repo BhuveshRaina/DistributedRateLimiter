@@ -56,6 +56,7 @@ public class RateLimitConfigController {
                 content = @Content(mediaType = "application/json",
                                  schema = @Schema(implementation = ConfigurationResponse.class)))
     public ResponseEntity<ConfigurationResponse> getConfiguration() {
+        configurationResolver.clearCache();
         java.util.Map<String, RateLimiterConfiguration.KeyConfig> effectiveConfigs = new java.util.HashMap<>();
         
         // Resolve effective limits for all configured keys and patterns

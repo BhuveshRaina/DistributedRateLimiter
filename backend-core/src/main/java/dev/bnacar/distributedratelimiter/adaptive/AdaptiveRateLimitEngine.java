@@ -30,6 +30,7 @@ public class AdaptiveRateLimitEngine {
     private static final Logger logger = LoggerFactory.getLogger(AdaptiveRateLimitEngine.class);
     private static final String ADAPTED_LIMITS_KEY = "ratelimiter:adaptive:limits";
     private static final String TRACKED_KEYS_SET = "ratelimiter:adaptive:tracked";
+    private static final String ADAPTIVE_TARGETS_KEY = "ratelimiter:adaptive:targets";
     
     private final SystemMetricsCollector metricsCollector;
     private final UserMetricsModeler userMetricsModeler;
@@ -76,6 +77,9 @@ public class AdaptiveRateLimitEngine {
         if (!enabled || redisTemplate == null) return;
         syncWithConfiguration();
         
+        // REFRESH HEALTH SNAPSHOT ONCE PER CYCLE
+        metricsCollector.refresh();
+        
         Set<String> allConfigKeys = configurationResolver.getValidConfigKeys();
         Set<String> specificKeys = configurationResolver.getSpecificKeysOnly();
         
@@ -83,65 +87,104 @@ public class AdaptiveRateLimitEngine {
         // Use allConfigKeys for the global stats to ensure patterns contribute to the mean RPS
         Map<String, UserMetrics> allMetrics = userMetricsModeler.fetchAndCalculateAllMetrics(allConfigKeys);
 
+        // ALWAYS LOG TELEMETRY once per cycle
+        SystemHealth health = metricsCollector.getCurrentHealth();
+        logger.info("[TELEMETRY] CPU: {}% | Latency: {}ms | Errors: {}%", 
+            String.format("%.2f", health.getCpuUtilization() * 100), 
+            String.format("%.2f", health.getResponseTimeP95()), 
+            Math.round(health.getErrorRate() * 100));
+
         // --- PHASE 2: EVALUATE INDIVIDUAL KEYS (Entirely In-Memory!) ---
-        // Only loop through SPECIFIC keys. Patterns are excluded from individual adaptation.
+        // Filter out zero RPS users for population count (Edge Case F)
+        int activeUserCount = (int) allMetrics.values().stream()
+            .filter(m -> m.getCurrentRequestRate() > 0)
+            .count();
+
+        logger.debug("[ADAPTIVE ENGINE] Evaluating {} configured keys. Active traffic population: {}", specificKeys.size(), activeUserCount);
+
         for (String key : specificKeys) {
             RateLimitConfig config = configurationResolver.getBaseConfig(key);
             if (config != null && config.isAdaptiveEnabled()) {
                 
                 // Get pre-calculated metrics
                 UserMetrics userMetrics = allMetrics.getOrDefault(key, 
-                    UserMetrics.builder().currentRequestRate(0).denialRate(0).zScore(1.0).build());
+                    UserMetrics.builder().currentRequestRate(0).denialRate(0).zScore(0.0).build());
 
-                evaluateKey(key, userMetrics);
+                evaluateKey(key, userMetrics, activeUserCount);
             }
         }
     }
 
-    private void evaluateKey(String key, UserMetrics userMetrics) { 
+    private void evaluateKey(String key, UserMetrics userMetrics, int activeUserCount) { 
         AdaptedLimits current = getAdaptedLimits(key); 
         if (current != null && "Manual override".equals(current.reasoning.get("decision"))) return;
+        
         try {
-            AdaptationDecision decision = generateAdaptationDecision(key, userMetrics, current);
+            AdaptationDecision decision = generateAdaptationDecision(key, userMetrics, current, activeUserCount);
+            
+            // IDLE PROTECTION LOGIC:
+            if (userMetrics.getCurrentRequestRate() <= 0) {
+                SystemHealth health = metricsCollector.getCurrentHealth();
+                double uCurr = Math.max(health.getCpuUtilization(), Math.max(health.getResponseTimeP95()/2000.0, health.getErrorRate()/0.20));
+                
+                // If the system is stressed (>70%) but THIS user is idle, protect them from MD.
+                if (uCurr > 0.70 && decision.getRecommendedCapacity() < ((current != null) ? current.adaptedCapacity : configurationResolver.getBaseConfig(key).getCapacity())) {
+                    logger.debug("[PROTECTED] Key: {} is idle during stress. Skipping decrease.", key);
+                    return;
+                }
+            }
+
             if (decision.shouldAdapt() && decision.getConfidence() >= minConfidenceThreshold) {
-                applyAdaptation(key, decision);
+                applyAdaptation(key, decision, current);
+            } else if (current != null) {
+                // Even if we don't change the numbers, update the reasoning so logs/UI aren't stale
+                current.reasoning = decision.getReasoning();
+                current.timestamp = Instant.now();
+                redisTemplate.opsForHash().put(ADAPTED_LIMITS_KEY, key, current);
             }
         } catch (Exception e) {
             logger.error("Error evaluating key {}: {}", key, e.getMessage());
         }
     }
 
-    private AdaptationDecision generateAdaptationDecision(String key, UserMetrics userMetrics, AdaptedLimits current) {
-        int baseCapacity, baseRefillRate;
+    private AdaptationDecision generateAdaptationDecision(String key, UserMetrics userMetrics, AdaptedLimits current, int activeUserCount) {
+        RateLimitConfig config = configurationResolver.getBaseConfig(key);
+        int lBase = config.getCapacity();
+        int rBase = config.getRefillRate();
         
-        if (current != null) {
-            baseCapacity = current.adaptedCapacity;
-            baseRefillRate = current.adaptedRefillRate;
-        } else {
-            RateLimitConfig config = configurationResolver.getBaseConfig(key);
-            baseCapacity = config.getCapacity();
-            baseRefillRate = config.getRefillRate();
-        }
+        int lOld = (current != null) ? current.adaptedCapacity : lBase;
+        int rOld = (current != null) ? current.adaptedRefillRate : rBase;
 
         return policyEngine.determineAdaptation(metricsCollector.getCurrentHealth(), 
                                               userMetrics, 
-                                              baseCapacity, baseRefillRate);
+                                              lOld, rOld, lBase, rBase, activeUserCount);
     }
     
-    private void applyAdaptation(String key, AdaptationDecision decision) {
+    private void applyAdaptation(String key, AdaptationDecision decision, AdaptedLimits current) {
         RateLimitConfig original = configurationResolver.getBaseConfig(key);
-        int newCap = enforceConstraints(decision.getRecommendedCapacity(), original.getCapacity());
-        int newRefill = enforceConstraints(decision.getRecommendedRefillRate(), original.getRefillRate());
+        int newCap = decision.getRecommendedCapacity();
+        int newRefill = decision.getRecommendedRefillRate();
         
-        AdaptedLimits adapted = new AdaptedLimits(
-            original.getCapacity(), original.getRefillRate(),
-            newCap, newRefill, Instant.now(), decision.getReasoning(), decision.getConfidence()
-        );
+        // For window-based algorithms, capacity and refill (limit) are synonymous
+        if (original.getAlgorithm() == RateLimitAlgorithm.SLIDING_WINDOW || 
+            original.getAlgorithm() == RateLimitAlgorithm.FIXED_WINDOW) {
+            newRefill = newCap;
+        }
         
-        redisTemplate.opsForHash().put(ADAPTED_LIMITS_KEY, key, adapted);
-        logger.info("GLOBAL ADAPTATION applied for {}: {}/{} -> {}/{} (Confidence: {}%)", 
-            key, original.getCapacity(), original.getRefillRate(), newCap, newRefill, 
-            Math.round(decision.getConfidence() * 100));
+        // ONLY UPDATE IF VALUES CHANGED
+        int prevCap = (current != null) ? current.adaptedCapacity : original.getCapacity();
+        int prevRefill = (current != null) ? current.adaptedRefillRate : original.getRefillRate();
+        
+        if (newCap != prevCap || newRefill != prevRefill) {
+            AdaptedLimits adapted = new AdaptedLimits(
+                original.getCapacity(), original.getRefillRate(),
+                newCap, newRefill, Instant.now(), decision.getReasoning(), decision.getConfidence()
+            );
+            
+            redisTemplate.opsForHash().put(ADAPTED_LIMITS_KEY, key, adapted);
+            logger.info("[REDIS UPDATE] Key: {} | Transition: {}/{} -> {}/{} (Algorithm: {})", 
+                key, prevCap, prevRefill, newCap, newRefill, original.getAlgorithm());
+        }
     }
 
     private int enforceConstraints(int recommended, int original) {
@@ -159,11 +202,7 @@ public class AdaptiveRateLimitEngine {
     private final java.util.concurrent.atomic.AtomicLong eventCounter = new java.util.concurrent.atomic.AtomicLong(0);
 
     public void recordTrafficEvent(String key, int tokens, boolean allowed) {
-        if (!enabled || redisTemplate == null) return; 
-        
-        if (eventCounter.incrementAndGet() % 100 == 0) {
-            syncWithConfiguration();
-        }
+        if (redisTemplate == null) return; // Remove 'enabled' check
         
         redisTemplate.opsForSet().add(TRACKED_KEYS_SET, key);
         userMetricsModeler.recordRequest(key, tokens, allowed);
@@ -183,7 +222,7 @@ public class AdaptiveRateLimitEngine {
         }
         
         if (adapted == null) {
-            return new AdaptiveStatusInfo("STATIC", 0.0, config != null ? config.getCapacity() : 10, 
+            return new AdaptiveStatusInfo("ADAPTIVE", 0.0, config != null ? config.getCapacity() : 10, 
                                         config != null ? config.getRefillRate() : 2, 
                                         config != null ? config.getCapacity() : 10, 
                                         config != null ? config.getRefillRate() : 2, 
@@ -198,10 +237,16 @@ public class AdaptiveRateLimitEngine {
     public Map<String, AdaptiveStatusInfo> getAllStatuses() {
         if (redisTemplate == null) return new HashMap<>();
         
-        Set<String> allConfigKeys = configurationResolver.getValidConfigKeys();
-        Map<String, AdaptiveStatusInfo> results = new HashMap<>();
+        // Combine configured keys and dynamically tracked keys
+        Set<String> allKeys = new java.util.HashSet<>(configurationResolver.getValidConfigKeys());
         
-        for (String key : allConfigKeys) {
+        Set<Object> trackedKeys = redisTemplate.opsForSet().members(TRACKED_KEYS_SET);
+        if (trackedKeys != null) {
+            for (Object k : trackedKeys) allKeys.add(k.toString());
+        }
+        
+        Map<String, AdaptiveStatusInfo> results = new HashMap<>();
+        for (String key : allKeys) {
             results.put(key, getStatus(key));
         }
         
@@ -249,6 +294,9 @@ public class AdaptiveRateLimitEngine {
         } else {
             configurationResolver.updateKeyConfig(target, updated);
         }
+        
+        // Ensure we clear any previous adaptations to start from the original values
+        removeOverride(target);
     }
 
     public void removeAdaptiveTarget(String target) {
@@ -343,13 +391,29 @@ public class AdaptiveRateLimitEngine {
     
     private void syncWithConfiguration() {
         try {
+            Set<String> validKeys = configurationResolver.getValidConfigKeys();
+            
+            // SAFETY: If we can't load any keys (likely a Redis blip), don't delete anything!
+            if (validKeys == null || validKeys.isEmpty()) {
+                return;
+            }
+
             Map<Object, Object> adaptedEntries = redisTemplate.opsForHash().entries(ADAPTED_LIMITS_KEY);
             Map<Object, Object> targetEntries = redisTemplate.opsForHash().entries(ADAPTIVE_TARGETS_KEY);
-            Set<String> validKeys = configurationResolver.getValidConfigKeys();
             
             for (Object keyObj : adaptedEntries.keySet()) {
                 String key = keyObj.toString();
+                
+                // Only delete if the key is definitely gone from both configs and patterns
                 if (!validKeys.contains(key) && !key.startsWith("benchmark")) {
+                    redisTemplate.opsForHash().delete(ADAPTED_LIMITS_KEY, key);
+                    redisTemplate.opsForSet().remove(TRACKED_KEYS_SET, key);
+                    continue;
+                }
+
+                // Also delete if adaptive mode was explicitly turned off for this key
+                RateLimitConfig config = configurationResolver.getBaseConfig(key);
+                if (config != null && !config.isAdaptiveEnabled()) {
                     redisTemplate.opsForHash().delete(ADAPTED_LIMITS_KEY, key);
                     redisTemplate.opsForSet().remove(TRACKED_KEYS_SET, key);
                 }

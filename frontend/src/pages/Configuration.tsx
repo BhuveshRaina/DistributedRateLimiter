@@ -42,78 +42,78 @@ const Configuration = () => {
     return (valid.includes(normalized as ConfigAlgorithm) ? normalized : 'token-bucket') as ConfigAlgorithm;
   };
 
+  const loadConfig = async (showLoading = true) => {
+    if (showLoading) setLoading(true);
+    try {
+      const [config, configStats] = await Promise.all([
+        rateLimiterApi.getConfig(),
+        rateLimiterApi.getConfigStats()
+      ]);
+      
+      // Set global config (algorithm defaults to token-bucket as backend doesn't expose it)
+      setGlobalConfig({
+        defaultCapacity: config.capacity,
+        defaultRefillRate: config.refillRate,
+        cleanupInterval: config.cleanupIntervalMs / 1000,
+        algorithm: 'token-bucket', // Backend doesn't expose global algorithm yet
+      });
+
+      // Convert keyConfigs to KeyConfig array
+      const keys: KeyConfig[] = Object.entries(config.keyConfigs || {}).map(([keyName, keyConfig], index) => {
+        const effective = config.effectiveKeyConfigs?.[keyName];
+        return {
+          id: `key-${index}`,
+          keyName,
+          capacity: keyConfig.capacity,
+          refillRate: keyConfig.refillRate,
+          algorithm: normalizeAlgorithm(keyConfig.algorithm || 'TOKEN_BUCKET'),
+          adaptiveEnabled: (keyConfig as any).adaptiveEnabled !== false,
+          effectiveCapacity: effective?.capacity,
+          effectiveRefillRate: effective?.refillRate,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      });
+      setKeyConfigs(keys);
+
+      // Convert patternConfigs to PatternConfig array
+      const patterns: PatternConfig[] = Object.entries(config.patternConfigs || {}).map(([pattern, patternConfig], index) => {
+        const effective = config.effectiveKeyConfigs?.[pattern];
+        return {
+          id: `pattern-${index}`,
+          pattern,
+          description: (patternConfig as any).description || `Rate limit configuration for ${pattern}`,
+          capacity: patternConfig.capacity,
+          refillRate: patternConfig.refillRate,
+          algorithm: normalizeAlgorithm(patternConfig.algorithm || 'TOKEN_BUCKET'),
+          adaptiveEnabled: (patternConfig as any).adaptiveEnabled !== false,
+          effectiveCapacity: effective?.capacity,
+          effectiveRefillRate: effective?.refillRate,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      });
+      setPatternConfigs(patterns);
+
+      // Update stats
+      setStats({
+        totalKeyConfigs: configStats.keyConfigCount || keys.length,
+        totalPatternConfigs: configStats.patternConfigCount || patterns.length,
+        mostUsedPattern: "user:*", // Backend doesn't track this yet
+        cacheHitRate: 98.4, // Mocked for UI
+        avgLookupTime: 1.2, // Mocked for UI
+      });
+
+    } catch (error) {
+      console.error('Failed to load configuration:', error);
+      toast.error('Failed to load configuration from backend');
+    } finally {
+      if (showLoading) setLoading(false);
+    }
+  };
+
   // Load configuration from API
   useEffect(() => {
-    const loadConfig = async () => {
-      setLoading(true);
-      try {
-        const [config, configStats] = await Promise.all([
-          rateLimiterApi.getConfig(),
-          rateLimiterApi.getConfigStats()
-        ]);
-        
-        // Set global config (algorithm defaults to token-bucket as backend doesn't expose it)
-        setGlobalConfig({
-          defaultCapacity: config.capacity,
-          defaultRefillRate: config.refillRate,
-          cleanupInterval: config.cleanupIntervalMs / 1000,
-          algorithm: 'token-bucket', // Backend doesn't expose global algorithm yet
-        });
-
-        // Convert keyConfigs to KeyConfig array
-        const keys: KeyConfig[] = Object.entries(config.keyConfigs || {}).map(([keyName, keyConfig], index) => {
-          const effective = config.effectiveKeyConfigs?.[keyName];
-          return {
-            id: `key-${index}`,
-            keyName,
-            capacity: keyConfig.capacity,
-            refillRate: keyConfig.refillRate,
-            algorithm: normalizeAlgorithm(keyConfig.algorithm || 'TOKEN_BUCKET'),
-            adaptiveEnabled: (keyConfig as any).adaptiveEnabled !== false,
-            effectiveCapacity: effective?.capacity,
-            effectiveRefillRate: effective?.refillRate,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          };
-        });
-        setKeyConfigs(keys);
-
-        // Convert patternConfigs to PatternConfig array
-        const patterns: PatternConfig[] = Object.entries(config.patternConfigs || {}).map(([pattern, patternConfig], index) => {
-          const effective = config.effectiveKeyConfigs?.[pattern];
-          return {
-            id: `pattern-${index}`,
-            pattern,
-            description: (patternConfig as any).description || `Rate limit configuration for ${pattern}`,
-            capacity: patternConfig.capacity,
-            refillRate: patternConfig.refillRate,
-            algorithm: normalizeAlgorithm(patternConfig.algorithm || 'TOKEN_BUCKET'),
-            adaptiveEnabled: (patternConfig as any).adaptiveEnabled !== false,
-            effectiveCapacity: effective?.capacity,
-            effectiveRefillRate: effective?.refillRate,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          };
-        });
-        setPatternConfigs(patterns);
-
-        // Update stats
-        setStats({
-          totalKeyConfigs: configStats.keyConfigCount || keys.length,
-          totalPatternConfigs: configStats.patternConfigCount || patterns.length,
-          mostUsedPattern: "user:*", // Backend doesn't track this yet
-          cacheHitRate: 98.4, // Mocked for UI
-          avgLookupTime: 1.2, // Mocked for UI
-        });
-
-        setLoading(false);
-      } catch (error) {
-        console.error('Failed to load configuration:', error);
-        toast.error('Failed to load configuration from backend');
-        setLoading(false);
-      }
-    };
-
     loadConfig();
   }, []);
 
@@ -145,26 +145,11 @@ const Configuration = () => {
       });
       
       if (existingKey) {
-        // Update existing key
-        setKeyConfigs(
-          keyConfigs.map((c) =>
-            c.keyName === config.keyName
-              ? { ...config, id: c.id, createdAt: c.createdAt, updatedAt: new Date().toISOString() }
-              : c
-          )
-        );
         toast.success("Key configuration updated successfully");
       } else {
-        // Add new key
-        const newConfig: KeyConfig = {
-          ...config,
-          id: Math.random().toString(36).substring(7),
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        setKeyConfigs([...keyConfigs, newConfig]);
         toast.success("Key configuration added successfully");
       }
+      await loadConfig(false);
     } catch (error) {
       toast.error(existingKey ? "Failed to update key configuration" : "Failed to add key configuration");
       console.error(error);
@@ -183,14 +168,8 @@ const Configuration = () => {
         adaptiveEnabled: config.adaptiveEnabled,
       });
       
-      setKeyConfigs(
-        keyConfigs.map((c) =>
-          c.id === id
-            ? { ...config, id, createdAt: c.createdAt, updatedAt: new Date().toISOString() }
-            : c
-        )
-      );
       toast.success("Key configuration updated successfully");
+      await loadConfig(false);
     } catch (error) {
       toast.error("Failed to update key configuration");
       console.error(error);
@@ -203,8 +182,8 @@ const Configuration = () => {
     
     try {
       await rateLimiterApi.deleteKeyConfig(config.keyName);
-      setKeyConfigs(keyConfigs.filter((c) => c.id !== id));
       toast.success("Key configuration deleted");
+      await loadConfig(false);
     } catch (error) {
       toast.error("Failed to delete key configuration");
       console.error(error);
@@ -226,26 +205,11 @@ const Configuration = () => {
       });
       
       if (existingPattern) {
-        // Update existing pattern
-        setPatternConfigs(
-          patternConfigs.map((c) =>
-            c.pattern === config.pattern
-              ? { ...config, id: c.id, createdAt: c.createdAt, updatedAt: new Date().toISOString() }
-              : c
-          )
-        );
         toast.success("Pattern configuration updated successfully");
       } else {
-        // Add new pattern
-        const newConfig: PatternConfig = {
-          ...config,
-          id: Math.random().toString(36).substring(7),
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        setPatternConfigs([...patternConfigs, newConfig]);
         toast.success("Pattern configuration added successfully");
       }
+      await loadConfig(false);
     } catch (error) {
       toast.error(existingPattern ? "Failed to update pattern configuration" : "Failed to add pattern configuration");
       console.error(error);
@@ -264,14 +228,8 @@ const Configuration = () => {
         adaptiveEnabled: config.adaptiveEnabled,
       });
       
-      setPatternConfigs(
-        patternConfigs.map((c) =>
-          c.id === id
-            ? { ...config, id, createdAt: c.createdAt, updatedAt: new Date().toISOString() }
-            : c
-        )
-      );
       toast.success("Pattern configuration updated successfully");
+      await loadConfig(false);
     } catch (error) {
       toast.error("Failed to update pattern configuration");
       console.error(error);
@@ -284,8 +242,8 @@ const Configuration = () => {
     
     try {
       await rateLimiterApi.deletePatternConfig(config.pattern);
-      setPatternConfigs(patternConfigs.filter((c) => c.id !== id));
       toast.success("Pattern configuration deleted");
+      await loadConfig(false);
     } catch (error) {
       toast.error("Failed to delete pattern configuration");
       console.error(error);

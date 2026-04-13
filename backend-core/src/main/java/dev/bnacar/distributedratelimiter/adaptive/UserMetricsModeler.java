@@ -4,11 +4,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
 
-import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -17,16 +15,17 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * PRODUCTION-READY User Metrics Modeler.
- * Uses Atomic Counters and Pipelining to achieve O(1) network overhead 
- * regardless of the number of users.
+ * Ultra-Responsive User Metrics Modeler.
+ * Uses 5-second micro-buckets to provide high-precision RPS calculation.
  */
 @Component
 public class UserMetricsModeler {
     
     private static final Logger logger = LoggerFactory.getLogger(UserMetricsModeler.class);
-    private static final String METRICS_PREFIX = "ratelimiter:metrics:v2:";
-    private static final int WINDOW_SECONDS = 60;
+    private static final String METRICS_PREFIX = "ratelimiter:metrics:v10:";
+    private static final int BUCKET_SIZE_SEC = 5;
+    private static final int WINDOW_SIZE_SEC = 60;
+    private static final int BUCKET_COUNT = WINDOW_SIZE_SEC / BUCKET_SIZE_SEC; // 12 buckets
     
     private final RedisTemplate<String, Object> redisTemplate;
 
@@ -35,101 +34,79 @@ public class UserMetricsModeler {
         this.redisTemplate = redisTemplate;
     }
     
-    /**
-     * Record a request event using Atomic Counters (O(1) memory).
-     */
     public void recordRequest(String key, int tokensRequested, boolean allowed) {
         if (redisTemplate == null) return;
 
-        long currentMinute = Instant.now().getEpochSecond() / 60;
-        String baseKey = METRICS_PREFIX + key + ":" + currentMinute;
+        long currentBucket = Instant.now().getEpochSecond() / BUCKET_SIZE_SEC;
+        String baseKey = METRICS_PREFIX + key + ":" + currentBucket;
         String field = allowed ? "allowed" : "denied";
 
-        redisTemplate.opsForHash().increment(baseKey, field, tokensRequested);
-        redisTemplate.expire(baseKey, Duration.ofMinutes(5));
+        try {
+            redisTemplate.opsForHash().increment(baseKey, field, tokensRequested);
+            redisTemplate.expire(baseKey, java.time.Duration.ofMinutes(2));
+        } catch (Exception e) {
+            logger.debug("Failed to record request metrics: {}", e.getMessage());
+        }
     }
 
-    /**
-     * ULTIMATE OPTIMIZATION: 
-     * Fetches ALL keys via Pipeline, calculates Mean/StdDev in memory, 
-     * and returns the fully built UserMetrics for every user in a single method.
-     * ZERO N+1 queries.
-     */
+    
     public Map<String, UserMetrics> fetchAndCalculateAllMetrics(Set<String> allKeys) {
         if (redisTemplate == null || allKeys == null || allKeys.isEmpty()) {
             return new HashMap<>();
         }
 
-        long currentMinute = Instant.now().getEpochSecond() / 60;
-        List<String> keysList = new ArrayList<>(allKeys);
-
-        // 1. ONE NETWORK CALL: Fetch all hashes via Pipeline
-        List<Object> results = redisTemplate.executePipelined((RedisCallback<Object>) connection -> {
-            for (String userKey : keysList) {
-                byte[] redisKey = (METRICS_PREFIX + userKey + ":" + currentMinute).getBytes();
-                connection.hGetAll(redisKey);
-            }
-            return null;
-        });
-
-        // 2. IN-MEMORY: Parse the pipeline results
-        Map<String, double[]> rawRates = new HashMap<>(); // Holds [rps, denialRate]
+        long currentBucket = Instant.now().getEpochSecond() / BUCKET_SIZE_SEC;
+        Map<String, double[]> rawRates = new HashMap<>();
         List<Double> allRps = new ArrayList<>();
 
-        for (int i = 0; i < results.size(); i++) {
-            Object result = results.get(i);
-            String userKey = keysList.get(i);
-            
-            long allowed = 0;
-            long denied = 0;
+        for (String userKey : allKeys) {
+            long totalAllowed = 0;
+            long totalDenied = 0;
 
-            if (result instanceof Map) {
-                @SuppressWarnings("unchecked")
-                Map<byte[], byte[]> hash = (Map<byte[], byte[]>) result;
-                allowed = parseLong(hash.get("allowed".getBytes()));
-                denied = parseLong(hash.get("denied".getBytes()));
+            // Fetch the last 12 buckets for this user
+            for (int i = 0; i < BUCKET_COUNT; i++) {
+                String bucketKey = METRICS_PREFIX + userKey + ":" + (currentBucket - i);
+                Map<Object, Object> bucketMap = redisTemplate.opsForHash().entries(bucketKey);
+                
+                totalAllowed += parseLong(bucketMap.get("allowed"));
+                totalDenied += parseLong(bucketMap.get("denied"));
             }
 
-            long total = allowed + denied;
-            double rps = (double) total / WINDOW_SECONDS;
-            double denialRate = total > 0 ? (double) denied / total : 0.0;
+            double total = totalAllowed + totalDenied;
+            double rps = total / (double) WINDOW_SIZE_SEC;
+            double denialRate = total > 0 ? (double) totalDenied / total : 0.0;
             
             rawRates.put(userKey, new double[]{rps, denialRate});
-            if (rps > 0) allRps.add(rps);
+            if (rps > 0.01) { 
+                allRps.add(rps);
+            }
         }
 
-        // 3. IN-MEMORY: Calculate Global Stats
+        // Calculate Population Stats
         double mean = 0.0;
         double stdDev = 1.0;
-
         if (!allRps.isEmpty()) {
             double sum = 0;
             for (double rps : allRps) sum += rps;
             mean = sum / allRps.size();
-
             if (allRps.size() > 1) {
                 double sumSq = 0;
                 for (double rps : allRps) sumSq += Math.pow(rps - mean, 2);
-                stdDev = Math.sqrt(sumSq / allRps.size());
-                if (stdDev == 0) stdDev = 1.0;
+                stdDev = Math.max(1.0, Math.sqrt(sumSq / allRps.size()));
             }
+            logger.info("[STATS] Active Users: {} | Avg RPS: {} | StdDev: {}", allRps.size(), String.format("%.2f", mean), String.format("%.2f", stdDev));
         }
 
-        // 4. IN-MEMORY: Build final UserMetrics with Z-Scores
         Map<String, UserMetrics> finalMetrics = new HashMap<>();
         for (Map.Entry<String, double[]> entry : rawRates.entrySet()) {
             double rps = entry.getValue()[0];
-            double denialRate = entry.getValue()[1];
             double zScore = (rps - mean) / stdDev;
-
             finalMetrics.put(entry.getKey(), UserMetrics.builder()
                 .currentRequestRate(rps)
-                .denialRate(denialRate)
+                .denialRate(entry.getValue()[1])
                 .zScore(zScore)
                 .build());
         }
-
-        logger.debug("GLOBAL STATS: Mean={}/s, StdDev={}/s, ActiveUsers={}", mean, stdDev, allRps.size());
 
         return finalMetrics;
     }
@@ -137,26 +114,28 @@ public class UserMetricsModeler {
     private long parseLong(Object val) {
         if (val == null) return 0L;
         if (val instanceof Long) return (Long) val;
-        if (val instanceof byte[]) return Long.parseLong(new String((byte[]) val));
+        if (val instanceof Integer) return ((Integer) val).longValue();
         try { return Long.parseLong(val.toString()); } catch (Exception e) { return 0L; }
     }
 
-    /**
-     * Get aggregated user metrics for a single key (Fallback).
-     */
     public UserMetrics getUserMetrics(String key) {
-        long currentMinute = Instant.now().getEpochSecond() / 60;
-        String redisKey = METRICS_PREFIX + key + ":" + currentMinute;
-        Map<Object, Object> entries = redisTemplate.opsForHash().entries(redisKey);
+        if (redisTemplate == null) return UserMetrics.builder().build();
         
-        long allowed = parseLong(entries.get("allowed"));
-        long denied = parseLong(entries.get("denied"));
-        long total = allowed + denied;
-        
+        long currentBucket = Instant.now().getEpochSecond() / BUCKET_SIZE_SEC;
+        long total = 0;
+        long denied = 0;
+
+        for (int i = 0; i < BUCKET_COUNT; i++) {
+            String bucketKey = METRICS_PREFIX + key + ":" + (currentBucket - i);
+            Map<Object, Object> map = redisTemplate.opsForHash().entries(bucketKey);
+            total += (parseLong(map.get("allowed")) + parseLong(map.get("denied")));
+            denied += parseLong(map.get("denied"));
+        }
+
         return UserMetrics.builder()
-            .currentRequestRate((double) total / WINDOW_SECONDS)
+            .currentRequestRate(total / (double) WINDOW_SIZE_SEC)
             .denialRate(total > 0 ? (double) denied / total : 0.0)
-            .zScore(1.0)
+            .zScore(0.0)
             .build();
     }
 }

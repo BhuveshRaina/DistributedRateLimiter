@@ -15,6 +15,7 @@ import { StatCard } from "@/components/dashboard/StatCard";
 import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
 import { AlgorithmCard } from "@/components/dashboard/AlgorithmCard";
 import { AdaptiveStatusCard } from "@/components/dashboard/AdaptiveStatusCard";
+import { AdaptiveControlPanel } from "@/components/dashboard/AdaptiveControlPanel";
 import { DashboardLoadingSkeleton } from "@/components/LoadingState";
 import { ApiHealthCheck } from "@/components/ApiHealthCheck";
 import { useApp } from "@/contexts/AppContext";
@@ -267,6 +268,8 @@ const Dashboard = () => {
           icon={Sliders}
         />
       </div>
+
+      <AdaptiveControlPanel />
 
       {/* Algorithm Performance Cards */}
       <div>

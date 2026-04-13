@@ -9,29 +9,35 @@ public class RateLimitConfig {
     private long cleanupIntervalMs;
     private RateLimitAlgorithm algorithm;
     private boolean adaptiveEnabled;
+    private boolean shadowMode;
 
     public RateLimitConfig() {
         // Default constructor for Jackson
     }
 
-    public RateLimitConfig(int capacity, int refillRate, long cleanupIntervalMs, RateLimitAlgorithm algorithm, boolean adaptiveEnabled) {
+    public RateLimitConfig(int capacity, int refillRate, long cleanupIntervalMs, RateLimitAlgorithm algorithm, boolean adaptiveEnabled, boolean shadowMode) {
         this.capacity = capacity;
         this.refillRate = refillRate;
         this.cleanupIntervalMs = cleanupIntervalMs;
         this.algorithm = algorithm;
         this.adaptiveEnabled = adaptiveEnabled;
+        this.shadowMode = shadowMode;
+    }
+
+    public RateLimitConfig(int capacity, int refillRate, long cleanupIntervalMs, RateLimitAlgorithm algorithm, boolean adaptiveEnabled) {
+        this(capacity, refillRate, cleanupIntervalMs, algorithm, adaptiveEnabled, false);
     }
 
     public RateLimitConfig(int capacity, int refillRate, long cleanupIntervalMs, RateLimitAlgorithm algorithm) {
-        this(capacity, refillRate, cleanupIntervalMs, algorithm, true);
+        this(capacity, refillRate, cleanupIntervalMs, algorithm, false);
     }
 
     public RateLimitConfig(int capacity, int refillRate, long cleanupIntervalMs) {
-        this(capacity, refillRate, cleanupIntervalMs, RateLimitAlgorithm.TOKEN_BUCKET, true);
+        this(capacity, refillRate, cleanupIntervalMs, RateLimitAlgorithm.TOKEN_BUCKET, false);
     }
 
     public RateLimitConfig(int capacity, int refillRate) {
-        this(capacity, refillRate, 60000, RateLimitAlgorithm.TOKEN_BUCKET, true); // Default 60s cleanup interval
+        this(capacity, refillRate, 60000, RateLimitAlgorithm.TOKEN_BUCKET, false); // Default 60s cleanup interval
     }
 
     public int getCapacity() {
@@ -74,6 +80,14 @@ public class RateLimitConfig {
         this.adaptiveEnabled = adaptiveEnabled;
     }
 
+    public boolean isShadowMode() {
+        return shadowMode;
+    }
+
+    public void setShadowMode(boolean shadowMode) {
+        this.shadowMode = shadowMode;
+    }
+
     @Override
     public String toString() {
         return "RateLimitConfig{" +
@@ -82,6 +96,7 @@ public class RateLimitConfig {
                 ", cleanupIntervalMs=" + cleanupIntervalMs +
                 ", algorithm=" + algorithm +
                 ", adaptiveEnabled=" + adaptiveEnabled +
+                ", shadowMode=" + shadowMode +
                 '}';
     }
 

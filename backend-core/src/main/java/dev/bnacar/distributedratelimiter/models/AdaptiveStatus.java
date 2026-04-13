@@ -12,6 +12,7 @@ public class AdaptiveStatus {
     private String displayName;
     private boolean adaptiveEnabled;
     private CurrentLimits currentLimits;
+    private OriginalLimits originalLimits;
     private AdaptiveStatusInfo adaptiveStatus;
     private Instant timestamp;
     
@@ -19,11 +20,12 @@ public class AdaptiveStatus {
         this.timestamp = Instant.now();
     }
     
-    public AdaptiveStatus(String key, String displayName, boolean adaptiveEnabled, CurrentLimits currentLimits, AdaptiveStatusInfo adaptiveStatus) {
+    public AdaptiveStatus(String key, String displayName, boolean adaptiveEnabled, CurrentLimits currentLimits, OriginalLimits originalLimits, AdaptiveStatusInfo adaptiveStatus) {
         this.key = key;
         this.displayName = displayName;
         this.adaptiveEnabled = adaptiveEnabled;
         this.currentLimits = currentLimits;
+        this.originalLimits = originalLimits;
         this.adaptiveStatus = adaptiveStatus;
         this.timestamp = Instant.now();
     }
@@ -59,6 +61,14 @@ public class AdaptiveStatus {
     
     public void setCurrentLimits(CurrentLimits currentLimits) {
         this.currentLimits = currentLimits;
+    }
+
+    public OriginalLimits getOriginalLimits() {
+        return originalLimits;
+    }
+
+    public void setOriginalLimits(OriginalLimits originalLimits) {
+        this.originalLimits = originalLimits;
     }
     
     public AdaptiveStatusInfo getAdaptiveStatus() {
@@ -100,6 +110,34 @@ public class AdaptiveStatus {
             return refillRate;
         }
         
+        public void setRefillRate(int refillRate) {
+            this.refillRate = refillRate;
+        }
+    }
+
+    public static class OriginalLimits {
+        private int capacity;
+        private int refillRate;
+
+        public OriginalLimits() {}
+
+        public OriginalLimits(int capacity, int refillRate) {
+            this.capacity = capacity;
+            this.refillRate = refillRate;
+        }
+
+        public int getCapacity() {
+            return capacity;
+        }
+
+        public void setCapacity(int capacity) {
+            this.capacity = capacity;
+        }
+
+        public int getRefillRate() {
+            return refillRate;
+        }
+
         public void setRefillRate(int refillRate) {
             this.refillRate = refillRate;
         }

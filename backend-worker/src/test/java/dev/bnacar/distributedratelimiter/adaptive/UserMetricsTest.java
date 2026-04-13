@@ -4,10 +4,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.data.redis.core.ZSetOperations;
 
-import java.util.Set;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -21,12 +21,12 @@ class UserMetricsTest {
     @Mock
     private RedisTemplate<String, Object> redisTemplate;
     @Mock
-    private ZSetOperations<String, Object> zSetOperations;
+    private HashOperations<String, Object, Object> hashOperations;
 
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        when(redisTemplate.opsForZSet()).thenReturn(zSetOperations);
+        when(redisTemplate.opsForHash()).thenReturn(hashOperations);
         modeler = new UserMetricsModeler(redisTemplate);
         policyEngine = new AimdPolicyEngine();
     }
@@ -35,30 +35,29 @@ class UserMetricsTest {
     void testSpecificUserMetrics_Calculation() {
         String userKey = "user_123";
         
-        // Mock 10 allowed and 10 denied requests in Redis for this specific user
-        Set<Object> mockEvents = Set.of(
-            "A:1:123456789", "A:1:123456790", "A:1:123456791", "A:1:123456792", "A:1:123456793",
-            "A:1:123456794", "A:1:123456795", "A:1:123456796", "A:1:123456797", "A:1:123456798",
-            "D:1:123456799", "D:1:123456800", "D:1:123456801", "D:1:123456802", "D:1:123456803",
-            "D:1:123456804", "D:1:123456805", "D:1:123456806", "D:1:123456807", "D:1:123456808"
+        // Mock 10 allowed and 10 denied tokens in Redis for this specific user
+        Map<Object, Object> mockMetrics = Map.of(
+            "allowed", 600L, // 600 tokens allowed in 60s = 10 RPS
+            "denied", 600L   // 600 tokens denied in 60s = 10 RPS
         );
         
-        when(zSetOperations.rangeByScore(eq("ratelimiter:adaptive:metrics:" + userKey), anyDouble(), anyDouble()))
-            .thenReturn(mockEvents);
+        when(hashOperations.entries(anyString())).thenReturn(mockMetrics);
 
         // 1. Verify Modeler calculates 50% denial rate for THIS user
         UserMetrics userMetrics = modeler.getUserMetrics(userKey);
         assertEquals(0.5, userMetrics.getDenialRate(), "User 123 should have a 50% denial rate");
-        assertEquals(20.0 / 60.0, userMetrics.getCurrentRequestRate(), 0.01);
+        assertEquals(20.0, userMetrics.getCurrentRequestRate(), 0.01); // (600+600)/60 = 20 RPS
 
         // 2. Verify Policy Engine sees this user's need
-        SystemHealth healthySystem = SystemHealth.builder().cpuUtilization(0.2).errorRate(0.0).build();
-        AdaptationDecision decision = policyEngine.determineAdaptation(healthySystem, userMetrics, 100, 20);
+        // System is stressed (E=0.10)
+        SystemHealth stressedSystem = SystemHealth.builder().cpuUtilization(0.80).build();
+        
+        // User has Z=1.0 (Mocked by getUserMetrics for single user)
+        AdaptationDecision decision = policyEngine.determineAdaptation(stressedSystem, userMetrics, 100, 20, 100, 20, 5);
 
-        // 3. Verify it triggers an increase specifically because user_123 is hitting limits
+        // 3. Verify it triggers a decrease because system is stressed and user is an outlier (intensity=1.0)
         assertTrue(decision.shouldAdapt());
-        assertEquals(110, decision.getRecommendedCapacity());
-        assertTrue(decision.getReasoning().get("decision").contains("user is hitting limits"), 
-            "Should mention user demand in reasoning");
+        // Tax = 1 + 1 = 2. Mult = 1 - (0.3 * 0.1 * 2) = 0.94. 100 * 0.94 = 94.
+        assertEquals(94, decision.getRecommendedCapacity());
     }
 }
