@@ -50,7 +50,6 @@ class AdaptiveRateLimitEngineTest {
             rateLimiterService,
             redisTemplate,
             true,   // enabled
-            0.7,    // minConfidenceThreshold
             2.0,    // maxAdjustmentFactor
             5,     // minCapacity
             100000  // maxCapacity
@@ -72,7 +71,7 @@ class AdaptiveRateLimitEngineTest {
         // Mock Bulk Metrics calculation (The new Zero N+1 approach)
         UserMetrics userMetrics = UserMetrics.builder().zScore(1.0).build();
         Map<String, UserMetrics> metricsMap = Map.of(key, userMetrics);
-        when(userMetricsModeler.fetchAndCalculateAllMetrics(allKeys)).thenReturn(metricsMap);
+        when(userMetricsModeler.fetchAndCalculateAllMetrics(eq(allKeys), anyLong())).thenReturn(metricsMap);
 
         SystemHealth health = SystemHealth.builder().cpuUtilization(0.55).build();
         when(metricsCollector.getCurrentHealth()).thenReturn(health);
@@ -81,7 +80,6 @@ class AdaptiveRateLimitEngineTest {
             .shouldAdapt(true)
             .recommendedCapacity(102)
             .recommendedRefillRate(20)
-            .confidence(1.0)
             .reasoning(Map.of("decision", "HEALTHY"))
             .build();
         
@@ -92,7 +90,7 @@ class AdaptiveRateLimitEngineTest {
         adaptiveEngine.evaluateAdaptations();
 
         // Verify
-        verify(userMetricsModeler).fetchAndCalculateAllMetrics(allKeys);
+        verify(userMetricsModeler).fetchAndCalculateAllMetrics(eq(allKeys), anyLong());
         verify(hashOperations).put(eq("ratelimiter:adaptive:limits"), eq(key), any(AdaptiveRateLimitEngine.AdaptedLimits.class));
     }
 

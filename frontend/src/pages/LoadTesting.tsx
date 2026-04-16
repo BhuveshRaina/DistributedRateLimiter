@@ -87,55 +87,54 @@ const LoadTesting = () => {
     const totalRequests = totalAllowed + totalDenied;
 
     if (totalRequests > 0) {
-      const newMetrics = {
-        ...metricsRef.current,
-        successful: totalAllowed,
-        rateLimited: totalDenied,
-        requestsSent: totalRequests,
-        successRate: Number(((totalAllowed / totalRequests) * 100).toFixed(1)),
-      };
-      
-      setMetrics(newMetrics);
-      metricsRef.current = newMetrics;
-
-      // Update graph points when new metrics arrive
       const now = Date.now();
       const elapsed = (now - startTimeRef.current) / 1000;
       const timeDelta = (now - lastGraphMetricsRef.current.timestamp) / 1000;
+      
+      let currentRps = metricsRef.current.currentRate;
 
-      // Add a point if at least 500ms has passed and elapsed > 0
+      // Only update RPS and graph if enough time has passed (at least 500ms)
       if (timeDelta >= 0.5 && elapsed > 0) {
         // Calculate instantaneous RPS using deltas
         const successDiff = Math.max(0, totalAllowed - lastGraphMetricsRef.current.successful);
         const limitedDiff = Math.max(0, totalDenied - lastGraphMetricsRef.current.rateLimited);
         const totalDiff = successDiff + limitedDiff;
-        
-        // Throughput calculation: items / seconds
         const instantRps = totalDiff / timeDelta;
+        
+        // Use exponential smoothing for a stable but responsive display
+        currentRps = Number(((instantRps * 0.7) + (currentRps * 0.3)).toFixed(1));
 
-        setTimeSeriesData(prev => {
-          // Use a simple exponential smoothing for the live display
-          const lastRps = prev.length > 0 ? prev[prev.length - 1].requestsPerSecond : instantRps;
-          const smoothedRps = (instantRps * 0.7) + (lastRps * 0.3);
+        // Update graph data
+        setTimeSeriesData(prev => [
+          ...prev,
+          {
+            timestamp: Number(elapsed.toFixed(1)),
+            requestsPerSecond: currentRps,
+            successRate: Number(((totalAllowed / totalRequests) * 100).toFixed(1)),
+            avgResponseTime: 0,
+            p95ResponseTime: 0,
+          }
+        ].slice(-100));
 
-          return [
-            ...prev,
-            {
-              timestamp: Number(elapsed.toFixed(1)),
-              requestsPerSecond: Number(smoothedRps.toFixed(1)),
-              successRate: Number(((totalAllowed / totalRequests) * 100).toFixed(1)),
-              avgResponseTime: 0,
-              p95ResponseTime: 0,
-            }
-          ].slice(-100);
-        });
-
+        // Update last capture point
         lastGraphMetricsRef.current = {
           successful: totalAllowed,
           rateLimited: totalDenied,
           timestamp: now
         };
       }
+
+      const newMetrics = {
+        ...metricsRef.current,
+        successful: totalAllowed,
+        rateLimited: totalDenied,
+        requestsSent: totalRequests,
+        successRate: Number(((totalAllowed / totalRequests) * 100).toFixed(1)),
+        currentRate: currentRps,
+      };
+      
+      setMetrics(newMetrics);
+      metricsRef.current = newMetrics;
     }
   }, [realtimeMetrics, isRunning, config.targetKey, baselineMetrics]);
 

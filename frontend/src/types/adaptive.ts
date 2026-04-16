@@ -12,7 +12,6 @@ export interface RecommendedLimits {
 
 export interface AdaptiveStatusInfo {
   mode: 'STATIC' | 'ADAPTIVE' | 'LEARNING' | 'OVERRIDE' | 'DISABLED';
-  confidence: number;
   recommendedLimits: RecommendedLimits;
   reasoning: Record<string, string>;
   adaptiveEnabled: boolean;
@@ -31,7 +30,6 @@ export interface AdaptiveStatus {
 export interface AdaptiveConfig {
   enabled: boolean;
   evaluationIntervalMs: number;
-  minConfidenceThreshold: number;
   maxAdjustmentFactor: number;
   minCapacity: number;
   maxCapacity: number;
@@ -63,7 +61,6 @@ export interface EnhancedRateLimitCheckResponse {
 export interface AdaptiveKeySummary {
   key: string;
   mode: string;
-  confidence: number;
   currentCapacity: number;
   originalCapacity: number;
   adaptationReason: string;

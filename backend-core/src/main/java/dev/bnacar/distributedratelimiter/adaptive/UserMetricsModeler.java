@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.serializer.RedisSerializer;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -44,40 +45,58 @@ public class UserMetricsModeler {
         try {
             redisTemplate.opsForHash().increment(baseKey, field, tokensRequested);
             redisTemplate.expire(baseKey, java.time.Duration.ofMinutes(2));
+            if (logger.isDebugEnabled()) {
+                logger.debug("[METRICS-RECORD] Key: {} | Bucket: {} | Allowed: {}", key, currentBucket, allowed);
+            }
         } catch (Exception e) {
             logger.debug("Failed to record request metrics: {}", e.getMessage());
         }
     }
 
     
-    public Map<String, UserMetrics> fetchAndCalculateAllMetrics(Set<String> allKeys) {
+    public Map<String, UserMetrics> fetchAndCalculateAllMetrics(Set<String> allKeys, long anchorEpoch) {
         if (redisTemplate == null || allKeys == null || allKeys.isEmpty()) {
             return new HashMap<>();
         }
 
-        long currentBucket = Instant.now().getEpochSecond() / BUCKET_SIZE_SEC;
-        Map<String, double[]> rawRates = new HashMap<>();
-        List<Double> allRps = new ArrayList<>();
+        long currentBucket = anchorEpoch / BUCKET_SIZE_SEC;
+        List<String> keyList = new ArrayList<>(allKeys);
 
-        for (String userKey : allKeys) {
+        // --- OPTIMIZATION: Pipelined Fetch ---
+        List<Object> results = redisTemplate.executePipelined((org.springframework.data.redis.core.RedisCallback<Object>) connection -> {
+            for (String userKey : keyList) {
+                for (int i = 0; i < BUCKET_COUNT; i++) {
+                    String bucketKey = METRICS_PREFIX + userKey + ":" + (currentBucket - i);
+                    connection.hashCommands().hGetAll(bucketKey.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                }
+            }
+            return null;
+        });
+
+        Map<String, UserMetrics> finalMetrics = new HashMap<>();
+        List<Double> allRps = new ArrayList<>();
+        Map<String, double[]> rawRates = new HashMap<>();
+
+        int resultIdx = 0;
+        for (String userKey : keyList) {
             long totalAllowed = 0;
             long totalDenied = 0;
 
-            // Fetch the last 12 buckets for this user
             for (int i = 0; i < BUCKET_COUNT; i++) {
-                String bucketKey = METRICS_PREFIX + userKey + ":" + (currentBucket - i);
-                Map<Object, Object> bucketMap = redisTemplate.opsForHash().entries(bucketKey);
-                
-                totalAllowed += parseLong(bucketMap.get("allowed"));
-                totalDenied += parseLong(bucketMap.get("denied"));
+                Object res = results.get(resultIdx++);
+                if (res instanceof Map) {
+                    Map<Object, Object> bucketMap = (Map<Object, Object>) res;
+                    totalAllowed += findAndParseLong(bucketMap, "allowed");
+                    totalDenied += findAndParseLong(bucketMap, "denied");
+                }
             }
 
             double total = totalAllowed + totalDenied;
             double rps = total / (double) WINDOW_SIZE_SEC;
             double denialRate = total > 0 ? (double) totalDenied / total : 0.0;
-            
+
             rawRates.put(userKey, new double[]{rps, denialRate});
-            if (rps > 0.01) { 
+            if (rps > 0.01) {
                 allRps.add(rps);
             }
         }
@@ -85,6 +104,9 @@ public class UserMetricsModeler {
         // Calculate Population Stats
         double mean = 0.0;
         double stdDev = 1.0;
+        double totalSystemRps = allRps.stream().mapToDouble(Double::doubleValue).sum();
+        boolean lowTrafficMode = totalSystemRps < 50.0;
+
         if (!allRps.isEmpty()) {
             double sum = 0;
             for (double rps : allRps) sum += rps;
@@ -94,13 +116,11 @@ public class UserMetricsModeler {
                 for (double rps : allRps) sumSq += Math.pow(rps - mean, 2);
                 stdDev = Math.max(1.0, Math.sqrt(sumSq / allRps.size()));
             }
-            logger.info("[STATS] Active Users: {} | Avg RPS: {} | StdDev: {}", allRps.size(), String.format("%.2f", mean), String.format("%.2f", stdDev));
         }
 
-        Map<String, UserMetrics> finalMetrics = new HashMap<>();
         for (Map.Entry<String, double[]> entry : rawRates.entrySet()) {
             double rps = entry.getValue()[0];
-            double zScore = (rps - mean) / stdDev;
+            double zScore = lowTrafficMode ? 0.0 : (rps - mean) / stdDev;
             finalMetrics.put(entry.getKey(), UserMetrics.builder()
                 .currentRequestRate(rps)
                 .denialRate(entry.getValue()[1])
@@ -111,10 +131,40 @@ public class UserMetricsModeler {
         return finalMetrics;
     }
 
+    private long findAndParseLong(Map<Object, Object> map, String field) {
+        if (map == null || map.isEmpty()) return 0L;
+        
+        // Try direct lookup
+        Object val = map.get(field);
+        if (val == null) {
+            // Try byte array lookup (connection.hGetAll returns byte[] keys)
+            for (Map.Entry<Object, Object> entry : map.entrySet()) {
+                if (entry.getKey() instanceof byte[]) {
+                    String key = new String((byte[]) entry.getKey(), java.nio.charset.StandardCharsets.UTF_8);
+                    if (field.equals(key)) {
+                        val = entry.getValue();
+                        break;
+                    }
+                }
+            }
+        }
+        
+        return parseLong(val);
+    }
+
     private long parseLong(Object val) {
         if (val == null) return 0L;
         if (val instanceof Long) return (Long) val;
         if (val instanceof Integer) return ((Integer) val).longValue();
+        if (val instanceof byte[]) {
+            try {
+                String s = new String((byte[]) val, java.nio.charset.StandardCharsets.UTF_8);
+                if (s.startsWith("\"") && s.endsWith("\"")) {
+                    s = s.substring(1, s.length() - 1);
+                }
+                return Long.parseLong(s);
+            } catch (Exception e) { return 0L; }
+        }
         try { return Long.parseLong(val.toString()); } catch (Exception e) { return 0L; }
     }
 

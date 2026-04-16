@@ -59,15 +59,6 @@ public class DistributedRateLimiterService extends RateLimiterService {
             }
             
             result = rateLimiter.tryConsumeWithResult(tokens);
-            
-            // SHADOW MODE LOGIC
-            if (config.isShadowMode()) {
-                if (!result.allowed) {
-                    logger.info("[SHADOW MODE] Key {} would have been rate limited. Allowing anyway.", sharedKey);
-                }
-                // Override the result to always allow, but keep original tokens remaining
-                result = new RateLimiter.ConsumptionResult(true, result.remainingTokens);
-            }
         } catch (Exception ex) {
             result = new RateLimiter.ConsumptionResult(false, -1);
         }

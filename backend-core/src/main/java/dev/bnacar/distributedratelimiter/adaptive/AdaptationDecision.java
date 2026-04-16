@@ -11,7 +11,6 @@ public class AdaptationDecision {
     private boolean shouldAdapt;
     private int recommendedCapacity;
     private int recommendedRefillRate;
-    private double confidence;
     private Map<String, String> reasoning;
     private Instant timestamp;
     
@@ -19,7 +18,6 @@ public class AdaptationDecision {
         this.shouldAdapt = builder.shouldAdapt;
         this.recommendedCapacity = builder.recommendedCapacity;
         this.recommendedRefillRate = builder.recommendedRefillRate;
-        this.confidence = builder.confidence;
         this.reasoning = builder.reasoning;
         this.timestamp = Instant.now();
     }
@@ -34,10 +32,6 @@ public class AdaptationDecision {
     
     public int getRecommendedRefillRate() {
         return recommendedRefillRate;
-    }
-    
-    public double getConfidence() {
-        return confidence;
     }
     
     public Map<String, String> getReasoning() {
@@ -56,7 +50,6 @@ public class AdaptationDecision {
         private boolean shouldAdapt;
         private int recommendedCapacity;
         private int recommendedRefillRate;
-        private double confidence;
         private Map<String, String> reasoning;
         
         public Builder shouldAdapt(boolean shouldAdapt) {
@@ -71,11 +64,6 @@ public class AdaptationDecision {
         
         public Builder recommendedRefillRate(int recommendedRefillRate) {
             this.recommendedRefillRate = recommendedRefillRate;
-            return this;
-        }
-        
-        public Builder confidence(double confidence) {
-            this.confidence = confidence;
             return this;
         }
         

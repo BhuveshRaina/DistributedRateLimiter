@@ -7,6 +7,7 @@ interface AlgorithmCardProps {
   activeKeys: number;
   avgResponseTime: number;
   successRate: number;
+  requestsPerSecond?: number;
 }
 
 export const AlgorithmCard = ({
@@ -14,6 +15,7 @@ export const AlgorithmCard = ({
   activeKeys,
   avgResponseTime,
   successRate,
+  requestsPerSecond = 0,
 }: AlgorithmCardProps) => {
   const getPerformanceColor = (rate: number) => {
     if (rate >= 95) return "text-green-600";
@@ -49,6 +51,11 @@ export const AlgorithmCard = ({
         </div>
 
         <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-muted-foreground">Live Throughput</span>
+            <span className="font-medium text-foreground">{requestsPerSecond} req/s</span>
+          </div>
+
           <div className="flex items-center justify-between">
             <span className="text-sm text-muted-foreground">Avg Response</span>
             <span className="font-medium text-foreground">{avgResponseTime}ms</span>

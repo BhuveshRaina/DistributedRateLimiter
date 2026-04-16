@@ -9,7 +9,9 @@ services:
 
   # TIER 1: The Traffic Generator (Simulates real users)
   generator:
-    build: ./backend-generator
+    build:
+      context: .
+      dockerfile: ./backend-generator/Dockerfile
     container_name: drl-generator
     environment:
       - RATELIMITER_LOADBALANCER_URL=http://loadbalancer
@@ -19,46 +21,59 @@ services:
 
   # TIER 2: The Rate Limit Workers (The Data Plane)
   worker1:
-    build: ./backend-worker
+    build:
+      context: .
+      dockerfile: ./backend-worker/Dockerfile
     container_name: drl-worker-1
     environment:
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATA_REDIS_PORT=6379
       - RATELIMITER_SECURITY_API_KEYS_ENABLED=false
+      - RATELIMITER_ADAPTIVE_ENABLED=true
     depends_on:
       - redis
     restart: unless-stopped
 
   worker2:
-    build: ./backend-worker
+    build:
+      context: .
+      dockerfile: ./backend-worker/Dockerfile
     container_name: drl-worker-2
     environment:
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATA_REDIS_PORT=6379
       - RATELIMITER_SECURITY_API_KEYS_ENABLED=false
+      - RATELIMITER_ADAPTIVE_ENABLED=true
     depends_on:
       - redis
     restart: unless-stopped
 
   worker3:
-    build: ./backend-worker
+    build:
+      context: .
+      dockerfile: ./backend-worker/Dockerfile
     container_name: drl-worker-3
     environment:
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATA_REDIS_PORT=6379
       - RATELIMITER_SECURITY_API_KEYS_ENABLED=false
+      - RATELIMITER_ADAPTIVE_ENABLED=true
     depends_on:
       - redis
     restart: unless-stopped
 
   # TIER 3: The Management Node (The Control Plane)
   manager:
-    build: ./backend-manager
+    build:
+      context: .
+      dockerfile: ./backend-manager/Dockerfile
     container_name: drl-manager
     environment:
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATA_REDIS_PORT=6379
       - RATELIMITER_SECURITY_API_KEYS_ENABLED=false
+      - RATELIMITER_NODE_TYPE=manager
+      - RATELIMITER_ADAPTIVE_ENABLED=true
     depends_on:
       - redis
     restart: unless-stopped

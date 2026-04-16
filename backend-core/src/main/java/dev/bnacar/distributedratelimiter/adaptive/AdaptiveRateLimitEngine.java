@@ -31,6 +31,11 @@ public class AdaptiveRateLimitEngine {
     private static final String ADAPTED_LIMITS_KEY = "ratelimiter:adaptive:limits";
     private static final String TRACKED_KEYS_SET = "ratelimiter:adaptive:tracked";
     private static final String ADAPTIVE_TARGETS_KEY = "ratelimiter:adaptive:targets";
+    private static final String EVALUATION_LOCK_KEY = "ratelimiter:adaptive:lock";
+
+    // FAILSAFE SLA DEFAULTS (Used if Redis or Configuration is desynced/corrupted)
+    private static final int FAILSAFE_SLA_CAPACITY = 100;
+    private static final int FAILSAFE_SLA_REFILL_RATE = 10;
     
     private final SystemMetricsCollector metricsCollector;
     private final UserMetricsModeler userMetricsModeler;
@@ -40,7 +45,6 @@ public class AdaptiveRateLimitEngine {
     private final RedisTemplate<String, Object> redisTemplate;
     
     private final boolean enabled;
-    private final double minConfidenceThreshold;
     private final int minCapacity;
     private final int maxCapacity;
     private final double maxAdjustmentFactor;
@@ -54,7 +58,6 @@ public class AdaptiveRateLimitEngine {
             @Lazy RateLimiterService rateLimiterService,
             @Autowired(required = false) @Qualifier("rateLimiterRedisTemplate") RedisTemplate<String, Object> redisTemplate,
             @Value("${ratelimiter.adaptive.enabled:true}") boolean enabled,
-            @Value("${ratelimiter.adaptive.min-confidence-threshold:0.7}") double minConfidenceThreshold,
             @Value("${ratelimiter.adaptive.max-adjustment-factor:2.0}") double maxAdjustmentFactor,
             @Value("${ratelimiter.adaptive.min-capacity:10}") int minCapacity,
             @Value("${ratelimiter.adaptive.max-capacity:100000}") int maxCapacity) {
@@ -66,7 +69,6 @@ public class AdaptiveRateLimitEngine {
         this.rateLimiterService = rateLimiterService;
         this.redisTemplate = redisTemplate;
         this.enabled = enabled;
-        this.minConfidenceThreshold = minConfidenceThreshold;
         this.maxAdjustmentFactor = maxAdjustmentFactor;
         this.minCapacity = minCapacity;
         this.maxCapacity = maxCapacity;
@@ -75,43 +77,61 @@ public class AdaptiveRateLimitEngine {
     @Scheduled(fixedRateString = "${ratelimiter.adaptive.evaluation-interval-ms:5000}")
     public void evaluateAdaptations() {
         if (!enabled || redisTemplate == null) return;
-        syncWithConfiguration();
-        
-        // REFRESH HEALTH SNAPSHOT ONCE PER CYCLE
-        metricsCollector.refresh();
-        
-        Set<String> allConfigKeys = configurationResolver.getValidConfigKeys();
-        Set<String> specificKeys = configurationResolver.getSpecificKeysOnly();
-        
-        // --- PHASE 1: COLLECT EVERYTHING IN ONE NETWORK CALL (Zero N+1) ---
-        // Use allConfigKeys for the global stats to ensure patterns contribute to the mean RPS
-        Map<String, UserMetrics> allMetrics = userMetricsModeler.fetchAndCalculateAllMetrics(allConfigKeys);
 
-        // ALWAYS LOG TELEMETRY once per cycle
-        SystemHealth health = metricsCollector.getCurrentHealth();
-        logger.info("[TELEMETRY] CPU: {}% | Latency: {}ms | Errors: {}%", 
-            String.format("%.2f", health.getCpuUtilization() * 100), 
-            String.format("%.2f", health.getResponseTimeP95()), 
-            Math.round(health.getErrorRate() * 100));
+        // LOOPHOLE 1: THUNDERING HERD (Distributed Lock)
+        // Only one instance runs the global AIMD math per cycle.
+        // Lock expires slightly before the next cycle (4 seconds for a 5-second interval).
+        Boolean acquired = redisTemplate.opsForValue().setIfAbsent(EVALUATION_LOCK_KEY, "locked", java.time.Duration.ofSeconds(4));
+        if (acquired == null || !acquired) {
+            logger.debug("[ADAPTIVE ENGINE] Leader already active. Skipping evaluation cycle.");
+            return;
+        }
 
-        // --- PHASE 2: EVALUATE INDIVIDUAL KEYS (Entirely In-Memory!) ---
-        // Filter out zero RPS users for population count (Edge Case F)
-        int activeUserCount = (int) allMetrics.values().stream()
-            .filter(m -> m.getCurrentRequestRate() > 0)
-            .count();
+        try {
+            syncWithConfiguration();
+            
+            // REFRESH HEALTH SNAPSHOT ONCE PER CYCLE
+            metricsCollector.refresh();
+            
+            // CAPTURE ANCHOR TIME ONCE to prevent bucket-drift mid-cycle
+            long evaluationAnchorEpoch = java.time.Instant.now().getEpochSecond();
+            
+            Set<String> allConfigKeys = configurationResolver.getValidConfigKeys();
+            Set<String> specificKeys = configurationResolver.getSpecificKeysOnly();
+            
+            // --- PHASE 1: COLLECT EVERYTHING IN ONE NETWORK CALL (Zero N+1) ---
+            // Use allConfigKeys for the global stats to ensure patterns contribute to the mean RPS
+            Map<String, UserMetrics> allMetrics = userMetricsModeler.fetchAndCalculateAllMetrics(allConfigKeys, evaluationAnchorEpoch);
 
-        logger.debug("[ADAPTIVE ENGINE] Evaluating {} configured keys. Active traffic population: {}", specificKeys.size(), activeUserCount);
+            // ALWAYS LOG TELEMETRY once per cycle
+            SystemHealth health = metricsCollector.getCurrentHealth();
+            logger.info("[TELEMETRY] CPU: {}% | Latency: {}ms | Errors: {}%", 
+                String.format("%.2f", health.getCpuUtilization() * 100), 
+                String.format("%.2f", health.getResponseTimeP95()), 
+                Math.round(health.getErrorRate() * 100));
 
-        for (String key : specificKeys) {
-            RateLimitConfig config = configurationResolver.getBaseConfig(key);
-            if (config != null && config.isAdaptiveEnabled()) {
-                
-                // Get pre-calculated metrics
-                UserMetrics userMetrics = allMetrics.getOrDefault(key, 
-                    UserMetrics.builder().currentRequestRate(0).denialRate(0).zScore(0.0).build());
+            // --- PHASE 2: EVALUATE INDIVIDUAL KEYS (Entirely In-Memory!) ---
+            // Filter out zero RPS users for population count (Edge Case F)
+            int activeUserCount = (int) allMetrics.values().stream()
+                .filter(m -> m.getCurrentRequestRate() > 0)
+                .count();
 
-                evaluateKey(key, userMetrics, activeUserCount);
+            logger.debug("[ADAPTIVE ENGINE] Evaluating {} configured keys. Active traffic population: {}", specificKeys.size(), activeUserCount);
+
+            for (String key : specificKeys) {
+                RateLimitConfig config = configurationResolver.getBaseConfig(key);
+                if (config != null && config.isAdaptiveEnabled()) {
+                    
+                    // Get pre-calculated metrics
+                    UserMetrics userMetrics = allMetrics.getOrDefault(key, 
+                        UserMetrics.builder().currentRequestRate(0).denialRate(0).zScore(0.0).build());
+
+                    evaluateKey(key, userMetrics, activeUserCount);
+                }
             }
+        } catch (Exception e) {
+            // LOOPHOLE 3: THREAD STARVATION (Catch blips/timeouts)
+            logger.error("[ADAPTIVE ENGINE] Critical failure during evaluation cycle: {}", e.getMessage());
         }
     }
 
@@ -122,25 +142,70 @@ public class AdaptiveRateLimitEngine {
         try {
             AdaptationDecision decision = generateAdaptationDecision(key, userMetrics, current, activeUserCount);
             
-            // IDLE PROTECTION LOGIC:
-            if (userMetrics.getCurrentRequestRate() <= 0) {
+            // IDLE PROTECTION, DECAY & EVICTION LOGIC:
+            if (userMetrics.getCurrentRequestRate() <= 0.01) {
                 SystemHealth health = metricsCollector.getCurrentHealth();
                 double uCurr = Math.max(health.getCpuUtilization(), Math.max(health.getResponseTimeP95()/2000.0, health.getErrorRate()/0.20));
-                
-                // If the system is stressed (>70%) but THIS user is idle, protect them from MD.
-                if (uCurr > 0.70 && decision.getRecommendedCapacity() < ((current != null) ? current.adaptedCapacity : configurationResolver.getBaseConfig(key).getCapacity())) {
+                RateLimitConfig baseConfig = configurationResolver.getBaseConfig(key);
+                int lBase = baseConfig.getCapacity();
+
+                // Case A: System is stressed (>70%) but user is idle.
+                // Protect them from MD (Multiplicative Decrease) that policyEngine likely recommended.
+                if (uCurr > 0.70 && decision.getRecommendedCapacity() < ((current != null) ? current.adaptedCapacity : lBase)) {
                     logger.debug("[PROTECTED] Key: {} is idle during stress. Skipping decrease.", key);
+                    return;
+                }
+                
+                // Case B: System is healthy (<=70%) and user is idle but has an inflated limit.
+                // Decay them back to lBase to prevent capacity hoarding.
+                if (uCurr <= 0.70 && current != null && current.adaptedCapacity > lBase) {
+                    int decayedCap = Math.max(lBase, (int)(current.adaptedCapacity * 0.90));
+                    int decayedRefill = Math.max(baseConfig.getRefillRate(), (int)(current.adaptedRefillRate * 0.90));
+                    
+                    Map<String, String> reasoning = new HashMap<>(decision.getReasoning());
+                    reasoning.put("decision", "IDLE_DECAY");
+                    reasoning.put("details", String.format("Decaying from %d to %d (Idle)", current.adaptedCapacity, decayedCap));
+                    
+                    decision = AdaptationDecision.builder()
+                        .shouldAdapt(true)
+                        .recommendedCapacity(decayedCap)
+                        .recommendedRefillRate(decayedRefill)
+                        .reasoning(reasoning)
+                        .build();
+                    
+                    applyAdaptation(key, decision, current);
+                    return;
+                }
+
+                // Case C: User is idle and at base capacity. DO NOT INCREASE.
+                if (decision.getRecommendedCapacity() > ((current != null) ? current.adaptedCapacity : lBase)) {
+                    logger.debug("[IDLE] Key: {} is idle. Blocking additive increase.", key);
+                    return;
+                }
+
+                // LOOPHOLE 2: ZOMBIE KEY EVICTION
+                // If the user is idle AND their limit is already back to base, evict from Redis memory.
+                if (uCurr <= 0.70 && current != null && current.adaptedCapacity <= lBase) {
+                    logger.debug("[EVICTING] Key: {} is idle and at base capacity. Freeing Redis memory.", key);
+                    removeAdaptiveStatus(key);
                     return;
                 }
             }
 
-            if (decision.shouldAdapt() && decision.getConfidence() >= minConfidenceThreshold) {
+            if (decision.shouldAdapt()) {
                 applyAdaptation(key, decision, current);
-            } else if (current != null) {
-                // Even if we don't change the numbers, update the reasoning so logs/UI aren't stale
-                current.reasoning = decision.getReasoning();
-                current.timestamp = Instant.now();
-                redisTemplate.opsForHash().put(ADAPTED_LIMITS_KEY, key, current);
+            } else {
+                // ALWAYS update reasoning so logs/UI aren't stale, even if we don't change numbers
+                RateLimitConfig baseConfig = configurationResolver.getBaseConfig(key);
+                int lBase = (baseConfig != null) ? baseConfig.getCapacity() : FAILSAFE_SLA_CAPACITY;
+                int rBase = (baseConfig != null) ? baseConfig.getRefillRate() : FAILSAFE_SLA_REFILL_RATE;
+
+                AdaptedLimits updated = (current != null) ? current : new AdaptedLimits(
+                    lBase, rBase, lBase, rBase, Instant.now(), decision.getReasoning()
+                );
+                updated.reasoning = decision.getReasoning();
+                updated.timestamp = Instant.now();
+                redisTemplate.opsForHash().put(ADAPTED_LIMITS_KEY, key, updated);
             }
         } catch (Exception e) {
             logger.error("Error evaluating key {}: {}", key, e.getMessage());
@@ -149,11 +214,14 @@ public class AdaptiveRateLimitEngine {
 
     private AdaptationDecision generateAdaptationDecision(String key, UserMetrics userMetrics, AdaptedLimits current, int activeUserCount) {
         RateLimitConfig config = configurationResolver.getBaseConfig(key);
-        int lBase = config.getCapacity();
-        int rBase = config.getRefillRate();
         
-        int lOld = (current != null) ? current.adaptedCapacity : lBase;
-        int rOld = (current != null) ? current.adaptedRefillRate : rBase;
+        // 1. Resolve lBase and rBase with strict null-checks and failsafe defaults
+        int lBase = (config != null) ? config.getCapacity() : FAILSAFE_SLA_CAPACITY;
+        int rBase = (config != null) ? config.getRefillRate() : FAILSAFE_SLA_REFILL_RATE;
+        
+        // 2. Resolve lOld and rOld with corruption detection (fallback to Base if <= 0)
+        int lOld = (current != null && current.adaptedCapacity > 0) ? current.adaptedCapacity : lBase;
+        int rOld = (current != null && current.adaptedRefillRate > 0) ? current.adaptedRefillRate : rBase;
 
         return policyEngine.determineAdaptation(metricsCollector.getCurrentHealth(), 
                                               userMetrics, 
@@ -178,7 +246,7 @@ public class AdaptiveRateLimitEngine {
         if (newCap != prevCap || newRefill != prevRefill) {
             AdaptedLimits adapted = new AdaptedLimits(
                 original.getCapacity(), original.getRefillRate(),
-                newCap, newRefill, Instant.now(), decision.getReasoning(), decision.getConfidence()
+                newCap, newRefill, Instant.now(), decision.getReasoning()
             );
             
             redisTemplate.opsForHash().put(ADAPTED_LIMITS_KEY, key, adapted);
@@ -196,13 +264,20 @@ public class AdaptiveRateLimitEngine {
 
     public AdaptedLimits getAdaptedLimits(String key) {
         if (redisTemplate == null) return null;
-        Object val = redisTemplate.opsForHash().get(ADAPTED_LIMITS_KEY, key); if (val == null) return null; if (val instanceof AdaptedLimits) return (AdaptedLimits) val; return new com.fasterxml.jackson.databind.ObjectMapper().registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule()).convertValue(val, AdaptedLimits.class);
+        Object val = redisTemplate.opsForHash().get(ADAPTED_LIMITS_KEY, key);
+        if (val == null) return null;
+        if (val instanceof AdaptedLimits) return (AdaptedLimits) val;
+        
+        // Handle case where it's a Map (from Jackson) or a String
+        return new com.fasterxml.jackson.databind.ObjectMapper()
+            .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule())
+            .convertValue(val, AdaptedLimits.class);
     }
     
     private final java.util.concurrent.atomic.AtomicLong eventCounter = new java.util.concurrent.atomic.AtomicLong(0);
 
     public void recordTrafficEvent(String key, int tokens, boolean allowed) {
-        if (redisTemplate == null) return; // Remove 'enabled' check
+        if (!enabled || redisTemplate == null) return; 
         
         redisTemplate.opsForSet().add(TRACKED_KEYS_SET, key);
         userMetricsModeler.recordRequest(key, tokens, allowed);
@@ -214,7 +289,7 @@ public class AdaptiveRateLimitEngine {
         boolean isAdaptiveEnabled = config != null && config.isAdaptiveEnabled();
         
         if (!isAdaptiveEnabled) {
-            return new AdaptiveStatusInfo("DISABLED", 0.0, config != null ? config.getCapacity() : 10, 
+            return new AdaptiveStatusInfo("DISABLED", config != null ? config.getCapacity() : 10, 
                                         config != null ? config.getRefillRate() : 2, 
                                         config != null ? config.getCapacity() : 10, 
                                         config != null ? config.getRefillRate() : 2, 
@@ -222,14 +297,14 @@ public class AdaptiveRateLimitEngine {
         }
         
         if (adapted == null) {
-            return new AdaptiveStatusInfo("ADAPTIVE", 0.0, config != null ? config.getCapacity() : 10, 
+            return new AdaptiveStatusInfo("ADAPTIVE", config != null ? config.getCapacity() : 10, 
                                         config != null ? config.getRefillRate() : 2, 
                                         config != null ? config.getCapacity() : 10, 
                                         config != null ? config.getRefillRate() : 2, 
                                         new HashMap<>(), true);
         }
         
-        return new AdaptiveStatusInfo("ADAPTIVE", adapted.confidence, adapted.originalCapacity, 
+        return new AdaptiveStatusInfo("ADAPTIVE", adapted.originalCapacity, 
                                     adapted.originalRefillRate, adapted.adaptedCapacity, 
                                     adapted.adaptedRefillRate, adapted.reasoning, true);
     }
@@ -259,7 +334,7 @@ public class AdaptiveRateLimitEngine {
             original != null ? original.getCapacity() : 10, 
             original != null ? original.getRefillRate() : 2,
             override.capacity, override.refillRate, Instant.now(), 
-            Map.of("decision", "Manual override"), 1.0
+            Map.of("decision", "Manual override")
         );
         redisTemplate.opsForHash().put(ADAPTED_LIMITS_KEY, key, adapted);
     }
@@ -331,9 +406,9 @@ public class AdaptiveRateLimitEngine {
 
     // --- INNER CLASSES ---
 
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     public static class AdaptiveStatusInfo {
         public final String mode;
-        public final double confidence;
         public final int originalCapacity;
         public final int originalRefillRate;
         public final int currentCapacity;
@@ -341,8 +416,8 @@ public class AdaptiveRateLimitEngine {
         public final Map<String, String> reasoning;
         private final boolean adaptiveEnabled;
 
-        public AdaptiveStatusInfo(String m, double c, int oc, int or, int cc, int cr, Map<String, String> r, boolean ae) {
-            this.mode = m; this.confidence = c; this.originalCapacity = oc; 
+        public AdaptiveStatusInfo(String m, int oc, int or, int cc, int cr, Map<String, String> r, boolean ae) {
+            this.mode = m; this.originalCapacity = oc; 
             this.originalRefillRate = or; this.currentCapacity = cc; this.currentRefillRate = cr; 
             this.reasoning = r; this.adaptiveEnabled = ae;
         }
@@ -352,6 +427,7 @@ public class AdaptiveRateLimitEngine {
         }
     }
     
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     public static class AdaptedLimits implements java.io.Serializable {
         public int originalCapacity;
         public int originalRefillRate;
@@ -359,11 +435,10 @@ public class AdaptiveRateLimitEngine {
         public int adaptedRefillRate;
         public java.time.Instant timestamp;
         public java.util.Map<String, String> reasoning;
-        public double confidence;
         public AdaptedLimits() {}
-        public AdaptedLimits(int oc, int or, int ac, int ar, java.time.Instant t, java.util.Map<String, String> r, double c) {
+        public AdaptedLimits(int oc, int or, int ac, int ar, java.time.Instant t, java.util.Map<String, String> r) {
             this.originalCapacity = oc; this.originalRefillRate = or; this.adaptedCapacity = ac; 
-            this.adaptedRefillRate = ar; this.timestamp = t; this.reasoning = r; this.confidence = c;
+            this.adaptedRefillRate = ar; this.timestamp = t; this.reasoning = r;
         }
     }
 

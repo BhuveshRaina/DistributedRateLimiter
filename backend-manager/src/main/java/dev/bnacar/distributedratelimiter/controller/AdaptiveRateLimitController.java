@@ -35,9 +35,6 @@ public class AdaptiveRateLimitController {
     @Value("${ratelimiter.adaptive.evaluation-interval-ms:300000}")
     private long evaluationIntervalMs;
     
-    @Value("${ratelimiter.adaptive.min-confidence-threshold:0.7}")
-    private double minConfidenceThreshold;
-    
     @Value("${ratelimiter.adaptive.max-adjustment-factor:2.0}")
     private double maxAdjustmentFactor;
     
@@ -90,7 +87,6 @@ public class AdaptiveRateLimitController {
             
             AdaptiveStatus.AdaptiveStatusInfo adaptiveStatusInfo = new AdaptiveStatus.AdaptiveStatusInfo(
                 statusInfo.mode,
-                statusInfo.confidence,
                 recommendedLimits,
                 statusInfo.reasoning,
                 statusInfo.isAdaptiveEnabled()
@@ -137,7 +133,6 @@ public class AdaptiveRateLimitController {
         
         AdaptiveStatus.AdaptiveStatusInfo adaptiveStatusInfo = new AdaptiveStatus.AdaptiveStatusInfo(
             statusInfo.mode,
-            statusInfo.confidence,
             recommendedLimits,
             statusInfo.reasoning,
             statusInfo.isAdaptiveEnabled()
@@ -214,7 +209,6 @@ public class AdaptiveRateLimitController {
         AdaptiveConfigResponse config = new AdaptiveConfigResponse(
             adaptiveEnabled,
             evaluationIntervalMs,
-            minConfidenceThreshold,
             maxAdjustmentFactor,
             minCapacity,
             maxCapacity
@@ -358,17 +352,15 @@ public class AdaptiveRateLimitController {
     public static class AdaptiveConfigResponse {
         private boolean enabled;
         private long evaluationIntervalMs;
-        private double minConfidenceThreshold;
         private double maxAdjustmentFactor;
         private int minCapacity;
         private int maxCapacity;
         
         public AdaptiveConfigResponse(boolean enabled, long evaluationIntervalMs, 
-                                     double minConfidenceThreshold, double maxAdjustmentFactor,
+                                     double maxAdjustmentFactor,
                                      int minCapacity, int maxCapacity) {
             this.enabled = enabled;
             this.evaluationIntervalMs = evaluationIntervalMs;
-            this.minConfidenceThreshold = minConfidenceThreshold;
             this.maxAdjustmentFactor = maxAdjustmentFactor;
             this.minCapacity = minCapacity;
             this.maxCapacity = maxCapacity;
@@ -388,14 +380,6 @@ public class AdaptiveRateLimitController {
         
         public void setEvaluationIntervalMs(long evaluationIntervalMs) {
             this.evaluationIntervalMs = evaluationIntervalMs;
-        }
-        
-        public double getMinConfidenceThreshold() {
-            return minConfidenceThreshold;
-        }
-        
-        public void setMinConfidenceThreshold(double minConfidenceThreshold) {
-            this.minConfidenceThreshold = minConfidenceThreshold;
         }
         
         public double getMaxAdjustmentFactor() {

@@ -25,11 +25,11 @@ public class RedisRateLimiterConfiguration {
         template.setKeySerializer(new StringRedisSerializer());
         template.setHashKeySerializer(new StringRedisSerializer());
         
-        // Use the ObjectMapper that has JavaTimeModule registered
+        // Use Jackson for objects, but we'll handle metrics as strings/longs manually where needed
         template.setValueSerializer(new GenericJackson2JsonRedisSerializer(objectMapper));
         template.setHashValueSerializer(new GenericJackson2JsonRedisSerializer(objectMapper));
         
-        template.setEnableTransactionSupport(true);
+        template.setEnableTransactionSupport(false);
         template.afterPropertiesSet();
         return template;
     }

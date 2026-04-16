@@ -45,7 +45,6 @@ const patternConfigSchema = z.object({
   refillRate: z.number().min(1, "Refill rate must be at least 1").max(1000),
   algorithm: z.enum(["token-bucket", "sliding-window", "fixed-window", "leaky-bucket"]),
   adaptiveEnabled: z.boolean().default(false),
-  shadowMode: z.boolean().default(false),
 });
 
 type PatternConfigFormData = z.infer<typeof patternConfigSchema>;
@@ -80,7 +79,6 @@ export const PatternConfigModal = ({
       refillRate: 5,
       algorithm: "token-bucket",
       adaptiveEnabled: false,
-      shadowMode: false,
     },
   });
 
@@ -96,7 +94,6 @@ export const PatternConfigModal = ({
         refillRate: initialData.refillRate,
         algorithm: initialData.algorithm,
         adaptiveEnabled: initialData.adaptiveEnabled,
-        shadowMode: initialData.shadowMode || false,
       });
     } else {
       form.reset({
@@ -106,7 +103,6 @@ export const PatternConfigModal = ({
         refillRate: 5,
         algorithm: "token-bucket" as const,
         adaptiveEnabled: false,
-        shadowMode: false,
       });
     }
   }, [initialData, form, open]);
@@ -225,30 +221,6 @@ export const PatternConfigModal = ({
                         />
                         <span className="text-xs text-muted-foreground">
                           {field.value ? "Enabled" : "Paused"}
-                        </span>
-                      </div>
-                    </FormControl>
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name="shadowMode"
-                render={({ field }) => (
-                  <FormItem className="flex flex-col justify-end">
-                    <FormLabel className="flex items-center gap-2 mb-2">
-                      <Brain className="h-4 w-4 text-orange-500" />
-                      Shadow Mode
-                    </FormLabel>
-                    <FormControl>
-                      <div className="flex items-center space-x-2 h-10 border rounded-md px-3 bg-muted/20">
-                        <Switch
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                        />
-                        <span className="text-xs text-muted-foreground">
-                          {field.value ? "Active" : "Off"}
                         </span>
                       </div>
                     </FormControl>

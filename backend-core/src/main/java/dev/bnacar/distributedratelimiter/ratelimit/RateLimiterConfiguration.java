@@ -99,7 +99,6 @@ public class RateLimiterConfiguration {
         private Long cleanupIntervalMs;
         private RateLimitAlgorithm algorithm;
         private boolean adaptiveEnabled = false;
-        private boolean shadowMode = false;
         
         public int getCapacity() {
             return capacity;
@@ -139,14 +138,6 @@ public class RateLimiterConfiguration {
 
         public void setAdaptiveEnabled(boolean adaptiveEnabled) {
             this.adaptiveEnabled = adaptiveEnabled;
-        }
-
-        public boolean isShadowMode() {
-            return shadowMode;
-        }
-
-        public void setShadowMode(boolean shadowMode) {
-            this.shadowMode = shadowMode;
         }
     }
     

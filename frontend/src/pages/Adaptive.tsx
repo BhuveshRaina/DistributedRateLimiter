@@ -174,6 +174,9 @@ const Adaptive = () => {
   };
 
   const formatEvaluationInterval = (ms: number) => {
+    if (ms < 60000) {
+      return `${Math.floor(ms / 1000)}s`;
+    }
     const minutes = Math.floor(ms / 60000);
     if (minutes >= 60) {
       return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
@@ -229,9 +232,9 @@ const Adaptive = () => {
           <AlertDescription className={config.enabled ? "text-green-900 dark:text-green-100" : "text-yellow-900 dark:text-yellow-100"}>
             {config.enabled ? (
               <>
-                <strong>Adaptive Rate Limiting is ENABLED.</strong> The system is actively adjusting rate limits
-                based on AIMD policies and system metrics. Evaluations occur every{" "}
-                {formatEvaluationInterval(config.evaluationIntervalMs)}.
+                <strong>Distributed Adaptive Rate Limiting is ENABLED.</strong> The Manager node is actively 
+                optimizing limits based on cluster-wide metrics (Max CPU & Global Latency). 
+                Evaluations occur every {formatEvaluationInterval(config.evaluationIntervalMs)}.
               </>
             ) : (
               <>
@@ -239,7 +242,7 @@ const Adaptive = () => {
                 <code className="bg-yellow-200/50 dark:bg-yellow-800/50 px-1 rounded">
                   ratelimiter.adaptive.enabled=true
                 </code>{" "}
-                in application.properties to enable AIMD-driven rate limiting.
+                to enable AIMD-driven cluster protection.
               </>
             )}
           </AlertDescription>
@@ -249,13 +252,18 @@ const Adaptive = () => {
       {/* Configuration Overview */}
       {config && (
         <Card className="p-6">
-          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <Settings className="h-5 w-5" />
-            Configuration
-          </h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold flex items-center gap-2">
+              <Settings className="h-5 w-5" />
+              Cluster Policy Configuration
+            </h3>
+            <Badge variant="outline" className="font-mono text-[10px] uppercase tracking-wider">
+              Control Plane: Manager Node
+            </Badge>
+          </div>
           <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
             <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Status</Label>
+              <Label className="text-xs text-muted-foreground">Cluster Status</Label>
               <div className="flex items-center gap-2">
                 <Badge variant={config.enabled ? "default" : "secondary"}>
                   {config.enabled ? "Enabled" : "Disabled"}
@@ -263,29 +271,24 @@ const Adaptive = () => {
               </div>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Evaluation Interval</Label>
+              <Label className="text-xs text-muted-foreground">Global Interval</Label>
               <p className="font-medium">{formatEvaluationInterval(config.evaluationIntervalMs)}</p>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Min Confidence</Label>
-              <p className="font-medium">{(config.minConfidenceThreshold * 100).toFixed(0)}%</p>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Max Adjustment</Label>
+              <Label className="text-xs text-muted-foreground">AIMD Multiplier</Label>
               <p className="font-medium">{config.maxAdjustmentFactor}x</p>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Min Capacity</Label>
+              <Label className="text-xs text-muted-foreground">Min Cluster Cap</Label>
               <p className="font-medium">{config.minCapacity.toLocaleString()}</p>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Max Capacity</Label>
+              <Label className="text-xs text-muted-foreground">Max Cluster Cap</Label>
               <p className="font-medium">{config.maxCapacity.toLocaleString()}</p>
             </div>
           </div>
         </Card>
       )}
-
       {/* Stats Overview */}
       <div className="grid gap-6 md:grid-cols-2">
         <Card className="p-6">
@@ -344,6 +347,7 @@ const Adaptive = () => {
                 <TableRow>
                   <TableHead>Key</TableHead>
                   <TableHead>Current Limits</TableHead>
+                  <TableHead>Current Traffic</TableHead>
                   <TableHead>Reasoning</TableHead>
                   <TableHead>Adaptation</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
@@ -385,7 +389,7 @@ const Adaptive = () => {
                               <div key={key} className="truncate" title={`${key}: ${value}`}>
                                 <span className="font-medium">{key}:</span> {value}
                               </div>
-                            )).slice(0, 2)}
+                            ))}
                           </div>
                         )}
                       </TableCell>

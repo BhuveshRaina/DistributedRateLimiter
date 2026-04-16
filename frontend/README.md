@@ -107,7 +107,6 @@ The dashboard connects to a distributed rate limiter backend running on **http:/
 - **Features**:
   - Real-time adaptive configuration display
   - Key status table with mode (STATIC/ADAPTIVE/LEARNING/OVERRIDE)
-  - Confidence meters and progress bars
   - Reasoning explanations from AIMD policy engine
   - Manual override controls for emergency intervention
   - Auto-refresh every 30 seconds
@@ -350,7 +349,7 @@ Real-time monitoring with live metrics, charts, and activity feeds. Now includes
 ### Adaptive Rate Limiting (`/adaptive`) 🆕
 AIMD policy-driven adaptive rate limiting dashboard with:
 - Configuration overview (enabled status, evaluation interval, thresholds)
-- Key status table with mode, confidence, and reasoning
+- Key status table with mode and reasoning
 - Manual override controls for emergency intervention
 - Real-time updates every 30 seconds
 

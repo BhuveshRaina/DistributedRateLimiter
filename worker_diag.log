@@ -1,0 +1,43 @@
+23:19:50,499 |-WARN in ch.qos.logback.core.model.processor.AppenderModelHandler - Appender named [CONSOLE_JSON] not referenced. Skipping further processing.
+23:19:50,513 |-WARN in ch.qos.logback.core.model.processor.AppenderModelHandler - Appender named [FILE_JSON] not referenced. Skipping further processing.
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::                (v3.5.7)
+
+23:19:50.578 [main] INFO  [] d.b.d.DistributedRateLimiterApplication - Starting DistributedRateLimiterApplication v1.2.0 using Java 17.0.16 with PID 88979 (/Users/bhuveshraina/Desktop/rate limiter latest/DistributedRateLimiter/backend-worker/target/backend-worker-1.2.0.jar started by bhuveshraina in /Users/bhuveshraina/Desktop/rate limiter latest/DistributedRateLimiter)
+23:19:50.579 [main] INFO  [] d.b.d.DistributedRateLimiterApplication - No active profile set, falling back to 1 default profile: "default"
+23:19:51.346 [main] INFO  [] o.s.d.r.c.RepositoryConfigurationDelegate - Multiple Spring Data modules found, entering strict repository configuration mode
+23:19:51.347 [main] INFO  [] o.s.d.r.c.RepositoryConfigurationDelegate - Bootstrapping Spring Data Redis repositories in DEFAULT mode.
+23:19:51.365 [main] INFO  [] o.s.d.r.c.RepositoryConfigurationDelegate - Finished Spring Data repository scanning in 9 ms. Found 0 Redis repository interfaces.
+23:19:51.629 [main] INFO  [] o.s.b.w.e.tomcat.TomcatWebServer - Tomcat initialized with port 8081 (http)
+23:19:51.637 [main] INFO  [] o.a.catalina.core.StandardService - Starting service [Tomcat]
+23:19:51.637 [main] INFO  [] o.a.catalina.core.StandardEngine - Starting Servlet engine: [Apache Tomcat/10.1.48]
+23:19:51.665 [main] INFO  [] o.a.c.c.C.[Tomcat].[localhost].[/] - Initializing Spring embedded WebApplicationContext
+23:19:51.666 [main] INFO  [] o.s.b.w.s.c.ServletWebServerApplicationContext - Root WebApplicationContext: initialization completed in 1054 ms
+23:19:52.222 [main] INFO  [] d.b.d.r.RateLimiterConfiguration - Configuration loaded from Redis successfully
+23:19:52.243 [Redis-Health-Check] INFO  [] d.b.d.monitoring.MetricsService - Redis connection restored
+23:19:52.276 [main] INFO  [] d.b.d.m.WorkerHealthReporter - WorkerHealthReporter initialized for node: 0edac91e-adc9-4278-9383-d3927241f773
+23:19:52.615 [main] INFO  [] o.s.b.a.e.web.EndpointLinksResolver - Exposing 2 endpoints beneath base path '/actuator'
+23:19:52.642 [main] INFO  [] o.s.b.w.e.tomcat.TomcatWebServer - Tomcat started on port 8081 (http) with context path '/'
+23:19:52.653 [main] INFO  [] d.b.d.DistributedRateLimiterApplication - Started DistributedRateLimiterApplication in 2.369 seconds (process running for 2.701)
+23:19:52.699 [scheduling-1] INFO  [] d.b.d.a.AdaptiveRateLimitEngine - [TELEMETRY] CPU: 0.00% | Latency: 0.00ms | Errors: 0%
+23:19:52.700 [scheduling-1] DEBUG [] d.b.d.a.AdaptiveRateLimitEngine - [ADAPTIVE ENGINE] Evaluating 0 configured keys. Active traffic population: 0
+23:19:57.696 [scheduling-1] INFO  [] d.b.d.a.AdaptiveRateLimitEngine - [TELEMETRY] CPU: 0.04% | Latency: 0.00ms | Errors: 0%
+23:19:57.696 [scheduling-1] DEBUG [] d.b.d.a.AdaptiveRateLimitEngine - [ADAPTIVE ENGINE] Evaluating 0 configured keys. Active traffic population: 0
+23:20:02.681 [scheduling-1] INFO  [] d.b.d.a.AdaptiveRateLimitEngine - [TELEMETRY] CPU: 0.20% | Latency: 0.00ms | Errors: 0%
+23:20:02.681 [scheduling-1] DEBUG [] d.b.d.a.AdaptiveRateLimitEngine - [ADAPTIVE ENGINE] Evaluating 0 configured keys. Active traffic population: 0
+23:20:07.688 [scheduling-1] INFO  [] d.b.d.a.AdaptiveRateLimitEngine - [TELEMETRY] CPU: 0.17% | Latency: 0.00ms | Errors: 0%
+23:20:07.689 [scheduling-1] DEBUG [] d.b.d.a.AdaptiveRateLimitEngine - [ADAPTIVE ENGINE] Evaluating 0 configured keys. Active traffic population: 0
+23:20:12.684 [scheduling-1] INFO  [] d.b.d.a.AdaptiveRateLimitEngine - [TELEMETRY] CPU: 0.17% | Latency: 0.00ms | Errors: 0%
+23:20:12.685 [scheduling-1] DEBUG [] d.b.d.a.AdaptiveRateLimitEngine - [ADAPTIVE ENGINE] Evaluating 0 configured keys. Active traffic population: 0
+23:20:17.680 [scheduling-1] INFO  [] d.b.d.a.AdaptiveRateLimitEngine - [TELEMETRY] CPU: 0.19% | Latency: 0.00ms | Errors: 0%
+23:20:17.680 [scheduling-1] DEBUG [] d.b.d.a.AdaptiveRateLimitEngine - [ADAPTIVE ENGINE] Evaluating 0 configured keys. Active traffic population: 0
+23:20:19.974 [SpringApplicationShutdownHook] INFO  [] o.s.b.w.e.tomcat.GracefulShutdown - Commencing graceful shutdown. Waiting for active requests to complete
+23:20:19.979 [tomcat-shutdown] INFO  [] o.s.b.w.e.tomcat.GracefulShutdown - Graceful shutdown complete
+23:20:19.995 [SpringApplicationShutdownHook] WARN  [] o.s.c.a.CommonAnnotationBeanPostProcessor - Destroy method on bean with name 'metricsService' threw an exception: java.lang.IllegalStateException: LettuceConnectionFactory has been STOPPED. Use start() to initialize it

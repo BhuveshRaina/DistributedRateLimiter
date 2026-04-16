@@ -77,9 +77,6 @@ export const AdaptiveStatusCard = () => {
   const adaptiveCount = statuses.filter(s => s.adaptiveStatus.mode === "ADAPTIVE").length;
   const learningCount = statuses.filter(s => s.adaptiveStatus.mode === "LEARNING").length;
   const overrideCount = statuses.filter(s => s.adaptiveStatus.mode === "OVERRIDE").length;
-  const avgConfidence = statuses.length > 0 
-    ? statuses.reduce((sum, s) => sum + s.adaptiveStatus.confidence, 0) / statuses.length 
-    : 0;
 
   return (
     <Card className="p-6 bg-gradient-to-br from-card to-primary/5">
@@ -121,14 +118,6 @@ export const AdaptiveStatusCard = () => {
             </div>
             <p className="text-xs text-muted-foreground">Override</p>
           </div>
-        </div>
-
-        <div className="space-y-1">
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-muted-foreground">Avg Confidence</span>
-            <span className="font-medium">{(avgConfidence * 100).toFixed(0)}%</span>
-          </div>
-          <Progress value={avgConfidence * 100} className="h-2" />
         </div>
 
         {statuses.length > 0 && (

@@ -9,23 +9,17 @@ public class RateLimitConfig {
     private long cleanupIntervalMs;
     private RateLimitAlgorithm algorithm;
     private boolean adaptiveEnabled;
-    private boolean shadowMode;
 
     public RateLimitConfig() {
         // Default constructor for Jackson
     }
 
-    public RateLimitConfig(int capacity, int refillRate, long cleanupIntervalMs, RateLimitAlgorithm algorithm, boolean adaptiveEnabled, boolean shadowMode) {
+    public RateLimitConfig(int capacity, int refillRate, long cleanupIntervalMs, RateLimitAlgorithm algorithm, boolean adaptiveEnabled) {
         this.capacity = capacity;
         this.refillRate = refillRate;
         this.cleanupIntervalMs = cleanupIntervalMs;
         this.algorithm = algorithm;
         this.adaptiveEnabled = adaptiveEnabled;
-        this.shadowMode = shadowMode;
-    }
-
-    public RateLimitConfig(int capacity, int refillRate, long cleanupIntervalMs, RateLimitAlgorithm algorithm, boolean adaptiveEnabled) {
-        this(capacity, refillRate, cleanupIntervalMs, algorithm, adaptiveEnabled, false);
     }
 
     public RateLimitConfig(int capacity, int refillRate, long cleanupIntervalMs, RateLimitAlgorithm algorithm) {
@@ -80,14 +74,6 @@ public class RateLimitConfig {
         this.adaptiveEnabled = adaptiveEnabled;
     }
 
-    public boolean isShadowMode() {
-        return shadowMode;
-    }
-
-    public void setShadowMode(boolean shadowMode) {
-        this.shadowMode = shadowMode;
-    }
-
     @Override
     public String toString() {
         return "RateLimitConfig{" +
@@ -96,7 +82,6 @@ public class RateLimitConfig {
                 ", cleanupIntervalMs=" + cleanupIntervalMs +
                 ", algorithm=" + algorithm +
                 ", adaptiveEnabled=" + adaptiveEnabled +
-                ", shadowMode=" + shadowMode +
                 '}';
     }
 

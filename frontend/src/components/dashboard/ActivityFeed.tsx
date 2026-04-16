@@ -1,7 +1,7 @@
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Clock, Ghost } from "lucide-react";
+import { Clock } from "lucide-react";
 
 interface ActivityEvent {
   id: string;
@@ -10,7 +10,6 @@ interface ActivityEvent {
   algorithm: string;
   status: "allowed" | "rejected";
   tokensUsed: number;
-  shadowMode?: boolean;
 }
 
 interface ActivityFeedProps {
@@ -43,12 +42,6 @@ export const ActivityFeed = ({ events }: ActivityFeedProps) => {
                   >
                     {event.status}
                   </Badge>
-                  {event.shadowMode && (
-                    <Badge variant="outline" className="text-[10px] border-orange-500/50 text-orange-500 gap-1 px-1.5 h-5">
-                      <Ghost className="h-3 w-3" />
-                      Shadow
-                    </Badge>
-                  )}
                 </div>
                 <p className="text-xs text-muted-foreground">
                   {event.algorithm} • {event.tokensUsed} tokens

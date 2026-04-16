@@ -111,6 +111,10 @@ public class RateLimitController {
             RateLimiter.ConsumptionResult result = rateLimiterService.isAllowedWithResult(effectiveKey, request.getTokens(), request.getAlgorithm());
             boolean allowed = result.allowed;
             
+            if (logger.isDebugEnabled()) {
+                logger.debug("[CHECK] Key: {} | Allowed: {} | AdaptiveEnabled: {}", effectiveKey, allowed, adaptiveRateLimitingEnabled);
+            }
+
             // Record traffic event for adaptive learning
             if (adaptiveRateLimitingEnabled) {
                 adaptiveEngine.recordTrafficEvent(effectiveKey, request.getTokens(), allowed);

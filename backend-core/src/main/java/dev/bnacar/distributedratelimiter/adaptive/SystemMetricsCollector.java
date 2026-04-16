@@ -10,6 +10,11 @@ import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.boot.actuate.health.HealthContributorRegistry;
 import org.springframework.stereotype.Component;
 
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.redis.core.RedisTemplate;
+import java.util.Set;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.lang.management.OperatingSystemMXBean;
@@ -29,8 +34,15 @@ public class SystemMetricsCollector {
     private final MeterRegistry meterRegistry;
     private final HealthContributorRegistry healthRegistry;
     private final MetricsService metricsService;
+    private final RedisTemplate<String, Object> redisTemplate;
     private final OperatingSystemMXBean osBean;
     private final MemoryMXBean memoryBean;
+    
+    // EWMA state for smoothing (to prevent volatile spikes from causing destructive interference)
+    private static final double EWMA_ALPHA = 0.3; // 30% new data, 70% historical
+    private double ewmaCpu = 0.0;
+    private double ewmaResponseTime = 0.0;
+    private double ewmaErrorRate = 0.0;
     
     // Internal counters for delta calculation
     private final AtomicLong lastLocalRequests = new AtomicLong(0);
@@ -42,23 +54,16 @@ public class SystemMetricsCollector {
 
     // The current thread-safe snapshot
     private final AtomicReference<SystemHealth> currentSnapshot = new AtomicReference<>();
-    private final AtomicReference<SystemHealth> mockOverride = new AtomicReference<>(null);
     private boolean initialized = false;
 
-    public void setMockHealth(SystemHealth health) {
-        this.mockOverride.set(health);
-    }
-
-    public void clearMockHealth() {
-        this.mockOverride.set(null);
-    }
-    
     public SystemMetricsCollector(MeterRegistry meterRegistry, 
                                  HealthContributorRegistry healthRegistry,
-                                 MetricsService metricsService) {
+                                 MetricsService metricsService,
+                                 @Autowired(required = false) @Qualifier("rateLimiterRedisTemplate") RedisTemplate<String, Object> redisTemplate) {
         this.meterRegistry = meterRegistry;
         this.healthRegistry = healthRegistry;
         this.metricsService = metricsService;
+        this.redisTemplate = redisTemplate;
         this.osBean = ManagementFactory.getOperatingSystemMXBean();
         this.memoryBean = ManagementFactory.getMemoryMXBean();
         this.currentSnapshot.set(SystemHealth.builder().build());
@@ -69,13 +74,6 @@ public class SystemMetricsCollector {
     }
 
     public void refresh() {
-        // 0. Mock Override (For Testing)
-        SystemHealth mock = mockOverride.get();
-        if (mock != null) {
-            currentSnapshot.set(mock);
-            return;
-        }
-
         // 1. Local Deltas (Surgical filtering for End-to-End Rate Limiter Latency)
         long localTotal = getLocalTotalRequestsRaw();
         double localTime = getLocalTotalTimeRaw();
@@ -100,11 +98,17 @@ public class SystemMetricsCollector {
         // SAFETY WARMUP
         if (!initialized) {
             initialized = true;
+            
+            // Seed EWMA with raw values during initialization
+            this.ewmaCpu = getCPUUtilizationRaw();
+            this.ewmaResponseTime = 0.0;
+            this.ewmaErrorRate = 0.0;
+            
             currentSnapshot.set(SystemHealth.builder()
-                .cpuUtilization(getCPUUtilizationRaw())
+                .cpuUtilization(this.ewmaCpu)
                 .memoryUtilization(getMemoryUtilizationRaw())
-                .responseTimeP95(0.0)
-                .errorRate(0.0)
+                .responseTimeP95(this.ewmaResponseTime)
+                .errorRate(this.ewmaErrorRate)
                 .redisHealthy(isRedisHealthy())
                 .downstreamServicesHealthy(true)
                 .build());
@@ -112,27 +116,38 @@ public class SystemMetricsCollector {
         }
 
         // 3. Signal Calculation
-        double p95 = 0.0;
-        double errorRate = 0.0;
+        double rawP95 = 0.0;
+        double rawErrorRate = 0.0;
+        double rawCpu = getCPUUtilizationRaw();
 
-        // Use Global Metrics for high-precision Latency if local timers are empty
-        // This ensures we see the Redis processing time even if Spring HTTP timers are being buffered
-        if (deltaLocalTotal > 0 && deltaLocalTime > 0) {
-            p95 = deltaLocalTime / (double) deltaLocalTotal;
-        } else if (deltaGlobalTotal > 0) {
-            p95 = deltaGlobalTime / (double) deltaGlobalTotal;
+        // LOGIC FIX: In 'manager' mode, we should prioritize Global Redis metrics 
+        // to allow cluster-wide visibility and external stress simulation.
+        if ("manager".equalsIgnoreCase(nodeType) && deltaGlobalTotal > 0) {
+            rawP95 = deltaGlobalTime / (double) deltaGlobalTotal;
+            rawErrorRate = (double) deltaGlobalFailures / deltaGlobalTotal;
+        } else {
+            // Worker/Fallback Mode: Use Local deltas
+            if (deltaLocalTotal > 0 && deltaLocalTime > 0) {
+                rawP95 = deltaLocalTime / (double) deltaLocalTotal;
+            } else if (deltaGlobalTotal > 0) {
+                rawP95 = deltaGlobalTime / (double) deltaGlobalTotal;
+            }
+            
+            if (deltaGlobalTotal > 0) {
+                rawErrorRate = (double) deltaGlobalFailures / deltaGlobalTotal;
+            }
         }
-        
-        // Use Global for Failures (5xx across the cluster)
-        if (deltaGlobalTotal > 0) {
-            errorRate = (double) deltaGlobalFailures / deltaGlobalTotal;
-        }
+
+        // 4. Apply EWMA Smoothing
+        this.ewmaCpu = (EWMA_ALPHA * rawCpu) + ((1 - EWMA_ALPHA) * this.ewmaCpu);
+        this.ewmaResponseTime = (EWMA_ALPHA * rawP95) + ((1 - EWMA_ALPHA) * this.ewmaResponseTime);
+        this.ewmaErrorRate = (EWMA_ALPHA * rawErrorRate) + ((1 - EWMA_ALPHA) * this.ewmaErrorRate);
 
         SystemHealth newHealth = SystemHealth.builder()
-            .cpuUtilization(getCPUUtilizationRaw())
+            .cpuUtilization(this.ewmaCpu)
             .memoryUtilization(getMemoryUtilizationRaw())
-            .responseTimeP95(p95)
-            .errorRate(errorRate)
+            .responseTimeP95(this.ewmaResponseTime)
+            .errorRate(this.ewmaErrorRate)
             .redisHealthy(isRedisHealthy())
             .downstreamServicesHealthy(true)
             .build();
@@ -144,16 +159,37 @@ public class SystemMetricsCollector {
         return currentSnapshot.get();
     }
     
-    private double getCPUUtilizationRaw() {
-        double procCpu = 0.0;
+    @Value("${ratelimiter.node.type:worker}")
+    private String nodeType;
 
-        if (osBean instanceof com.sun.management.OperatingSystemMXBean) {
-            com.sun.management.OperatingSystemMXBean sunOsBean = (com.sun.management.OperatingSystemMXBean) osBean;
-            // Actual CPU usage of ONLY this Java process (0.0 to 1.0)
-            procCpu = sunOsBean.getProcessCpuLoad();
+    private double getCPUUtilizationRaw() {
+        // PRIORITY 1: Cluster-wide CPU from Redis (Manager looks at all nodes)
+        if (redisTemplate != null) {
+            try {
+                Set<String> workerKeys = redisTemplate.keys("ratelimiter:health:cpu:*");
+                if (workerKeys != null && !workerKeys.isEmpty()) {
+                    double maxClusterCpu = 0.0;
+                    for (String key : workerKeys) {
+                        Object val = redisTemplate.opsForValue().get(key);
+                        if (val != null) {
+                            try {
+                                maxClusterCpu = Math.max(maxClusterCpu, Double.parseDouble(val.toString()));
+                            } catch (NumberFormatException ignored) {}
+                        }
+                    }
+                    if (maxClusterCpu > 0) return maxClusterCpu;
+                }
+            } catch (Exception e) {
+                logger.debug("Failed to fetch cluster CPU: {}", e.getMessage());
+            }
         }
 
-        // Fallback to 0 if negative (common during JVM warmup)
+        // PRIORITY 2: Local Process CPU (Worker or single-node fallback)
+        double procCpu = 0.0;
+        if (osBean instanceof com.sun.management.OperatingSystemMXBean) {
+            com.sun.management.OperatingSystemMXBean sunOsBean = (com.sun.management.OperatingSystemMXBean) osBean;
+            procCpu = sunOsBean.getProcessCpuLoad();
+        }
         return Math.max(0.0, procCpu);
     }
     

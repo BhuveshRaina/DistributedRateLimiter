@@ -145,16 +145,14 @@ public class AdaptiveStatus {
     
     public static class AdaptiveStatusInfo {
         private String mode;
-        private double confidence;
         private RecommendedLimits recommendedLimits;
         private Map<String, String> reasoning;
         private boolean adaptiveEnabled;
         
         public AdaptiveStatusInfo() {}
         
-        public AdaptiveStatusInfo(String mode, double confidence, RecommendedLimits recommendedLimits, Map<String, String> reasoning, boolean adaptiveEnabled) {
+        public AdaptiveStatusInfo(String mode, RecommendedLimits recommendedLimits, Map<String, String> reasoning, boolean adaptiveEnabled) {
             this.mode = mode;
-            this.confidence = confidence;
             this.recommendedLimits = recommendedLimits;
             this.reasoning = reasoning;
             this.adaptiveEnabled = adaptiveEnabled;
@@ -166,14 +164,6 @@ public class AdaptiveStatus {
         
         public void setMode(String mode) {
             this.mode = mode;
-        }
-        
-        public double getConfidence() {
-            return confidence;
-        }
-        
-        public void setConfidence(double confidence) {
-            this.confidence = confidence;
         }
         
         public RecommendedLimits getRecommendedLimits() {

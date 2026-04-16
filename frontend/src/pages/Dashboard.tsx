@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Card } from "@/components/ui/card";
 import { Activity, TrendingUp, PieChart, Sliders } from "lucide-react";
 import {
@@ -15,7 +15,6 @@ import { StatCard } from "@/components/dashboard/StatCard";
 import { ActivityFeed } from "@/components/dashboard/ActivityFeed";
 import { AlgorithmCard } from "@/components/dashboard/AlgorithmCard";
 import { AdaptiveStatusCard } from "@/components/dashboard/AdaptiveStatusCard";
-import { AdaptiveControlPanel } from "@/components/dashboard/AdaptiveControlPanel";
 import { DashboardLoadingSkeleton } from "@/components/LoadingState";
 import { ApiHealthCheck } from "@/components/ApiHealthCheck";
 import { useApp } from "@/contexts/AppContext";
@@ -29,32 +28,40 @@ interface TimeSeriesData {
   total: number;
 }
 
-interface ActivityEvent {
-  id: string;
-  timestamp: string;
-  key: string;
-  algorithm: string;
-  status: "allowed" | "rejected";
-  tokensUsed: number;
-}
-
 interface AlgorithmMetric {
   name: string;
+  displayName: string;
   activeKeys: number;
   avgResponseTime: number;
   successRate: number;
+  requestsPerSecond: number;
 }
+
+const ALGO_DISPLAY_NAMES: Record<string, string> = {
+  'TOKEN_BUCKET': 'Token Bucket',
+  'SLIDING_WINDOW': 'Sliding Window',
+  'FIXED_WINDOW': 'Fixed Window',
+  'LEAKY_BUCKET': 'Leaky Bucket',
+  'COMPOSITE': 'Composite',
+};
 
 const Dashboard = () => {
   const { realtimeMetrics, isConnected } = useApp();
   const [loading, setLoading] = useState(true);
   const [activeKeys, setActiveKeys] = useState(0);
-  const [requestsPerSecond, setRequestsPerSecond] = useState(0);
-  const [successRate, setSuccessRate] = useState(100);
+  const [requestsPerSecond, setRequestsPerSecond] = useState<string | number>(0);
+  const [successRate, setSuccessRate] = useState<string | number>(100);
   const [algorithmMetrics, setAlgorithmMetrics] = useState<AlgorithmMetric[]>([]);
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
   const [timeSeriesData, setTimeSeriesData] = useState<TimeSeriesData[]>([]);
-  const [previousMetrics, setPreviousMetrics] = useState<{ allowed: number; denied: number; timestamp: number } | null>(null);
+
+  // Use Ref for previous metrics to prevent flickering and unnecessary re-renders
+  const prevMetricsRef = useRef<{ 
+    allowed: number; 
+    denied: number; 
+    timestamp: number;
+    perAlgo: Record<string, { allowed: number; denied: number }>;
+  } | null>(null);
 
   // Enable keyboard shortcuts
   useKeyboardShortcuts(dashboardShortcuts);
@@ -63,25 +70,33 @@ const Dashboard = () => {
   useEffect(() => {
     const loadInitialData = async () => {
       try {
-        // Fetch initial metrics and active keys
         const [metricsData, keysData] = await Promise.all([
           rateLimiterApi.getMetrics(),
           rateLimiterApi.getActiveKeys()
         ]);
-        
-        // Initialize time series with current data
+
         const now = new Date();
         const totalAllowed = metricsData.totalAllowedRequests;
         const totalDenied = metricsData.totalDeniedRequests;
-        
+
         setTimeSeriesData([{
           time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           allowed: totalAllowed,
           rejected: totalDenied,
           total: totalAllowed + totalDenied,
         }]);
-        
-        setPreviousMetrics({ allowed: totalAllowed, denied: totalDenied, timestamp: Date.now() });
+
+        const perAlgo: Record<string, { allowed: number; denied: number }> = {};
+        Object.entries(metricsData.perAlgorithmMetrics || {}).forEach(([name, data]) => {
+          perAlgo[name] = { allowed: data.allowedRequests, denied: data.deniedRequests };
+        });
+
+        prevMetricsRef.current = { 
+          allowed: totalAllowed, 
+          denied: totalDenied, 
+          timestamp: Date.now(),
+          perAlgo
+        };
         setLoading(false);
       } catch (error) {
         console.error('Failed to load dashboard data:', error);
@@ -91,136 +106,143 @@ const Dashboard = () => {
     loadInitialData();
   }, []);
 
-  // Update metrics from real-time polling (AppContext polls /metrics every 5s)
+  // Update metrics from real-time polling (AppContext polls /metrics every 1s)
   useEffect(() => {
     if (!realtimeMetrics) return;
-    
+
     const totalRequests = realtimeMetrics.totalAllowedRequests + realtimeMetrics.totalDeniedRequests;
     const currentSuccessRate = totalRequests > 0 
-      ? Math.round((realtimeMetrics.totalAllowedRequests / totalRequests) * 100) 
-      : 100;
-    
+      ? (realtimeMetrics.totalAllowedRequests / totalRequests * 100).toFixed(1)
+      : "100.0";
+
     const currentActiveKeys = Object.keys(realtimeMetrics.keyMetrics).length;
-    
+
     // Calculate requests per second and update time series
-    if (previousMetrics) {
-      const timeDiff = (Date.now() - previousMetrics.timestamp) / 1000; // seconds
-      
-      // Prevent division by zero or near-zero which causes massive spikes (e.g., 600 RPS)
-      if (timeDiff < 0.5) return;
+    const now = Date.now();
+    if (prevMetricsRef.current) {
+      const timeDiff = (now - prevMetricsRef.current.timestamp) / 1000; // seconds
 
-      const allowedDiff = realtimeMetrics.totalAllowedRequests - previousMetrics.allowed;
-      const deniedDiff = realtimeMetrics.totalDeniedRequests - previousMetrics.denied;
-      const totalDiff = allowedDiff + deniedDiff;
-      
-      const rps = timeDiff > 0 ? Math.round(totalDiff / timeDiff) : 0;
-      const allowedRps = timeDiff > 0 ? Math.round(allowedDiff / timeDiff) : 0;
-      const deniedRps = timeDiff > 0 ? Math.round(deniedDiff / timeDiff) : 0;
-      
-      setRequestsPerSecond(rps);
+      // Update at most once per 500ms to keep it smooth
+      if (timeDiff >= 0.5) {
+        const allowedDiff = realtimeMetrics.totalAllowedRequests - prevMetricsRef.current.allowed;
+        const deniedDiff = realtimeMetrics.totalDeniedRequests - prevMetricsRef.current.denied;
+        const totalDiff = allowedDiff + deniedDiff;
 
-      // Update time series data with actual rates (RPS)
-      const now = new Date();
-      setTimeSeriesData((prev) => {
-        const newPoint = {
-          time: now.toLocaleTimeString([], { minute: '2-digit', second: '2-digit' }),
-          allowed: allowedRps,
-          rejected: deniedRps,
-          total: rps,
+        const rps = (totalDiff / timeDiff).toFixed(1);
+        const allowedRps = (allowedDiff / timeDiff).toFixed(1);
+        const deniedRps = (deniedDiff / timeDiff).toFixed(1);
+
+        setRequestsPerSecond(rps);
+
+        // Update time series data
+        const timeStr = new Date(now).toLocaleTimeString([], { minute: '2-digit', second: '2-digit' });
+        setTimeSeriesData((prev) => {
+          const newPoint = {
+            time: timeStr,
+            allowed: parseFloat(allowedRps),
+            rejected: parseFloat(deniedRps),
+            total: parseFloat(rps),
+          };
+          return [...prev, newPoint].slice(-300);
+        });
+
+        // Update algorithm metrics with individual live RPS
+        if (realtimeMetrics.perAlgorithmMetrics) {
+          const metrics: AlgorithmMetric[] = Object.entries(realtimeMetrics.perAlgorithmMetrics)
+            .filter(([_, data]) => (data.allowedRequests + data.deniedRequests) > 0)
+            .map(([name, data]) => {
+              const prev = prevMetricsRef.current?.perAlgo[name] || { allowed: 0, denied: 0 };
+              const algoTotalDiff = (data.allowedRequests + data.deniedRequests) - (prev.allowed + prev.denied);
+              const algoRps = parseFloat((algoTotalDiff / timeDiff).toFixed(1));
+
+              const total = data.allowedRequests + data.deniedRequests || 1;
+              return {
+                name,
+                displayName: ALGO_DISPLAY_NAMES[name] || name,
+                activeKeys: 0, // Updated by fetchAlgorithmMetrics
+                avgResponseTime: parseFloat((data.totalProcessingTimeMs / total).toFixed(2)),
+                successRate: parseFloat(((data.allowedRequests / total) * 100).toFixed(1)),
+                requestsPerSecond: algoRps
+              };
+            });
+
+          if (metrics.length > 0) {
+            setAlgorithmMetrics(prev => {
+              return metrics.map(m => {
+                const existing = prev.find(p => p.name === m.name);
+                return { ...m, activeKeys: existing?.activeKeys || 0 };
+              });
+            });
+          }
+        }
+
+        // Update prevMetricsRef for next calculation
+        const currentPerAlgo: Record<string, { allowed: number; denied: number }> = {};
+        Object.entries(realtimeMetrics.perAlgorithmMetrics || {}).forEach(([name, data]) => {
+          currentPerAlgo[name] = { allowed: data.allowedRequests, denied: data.deniedRequests };
+        });
+
+        prevMetricsRef.current = {
+          allowed: realtimeMetrics.totalAllowedRequests,
+          denied: realtimeMetrics.totalDeniedRequests,
+          timestamp: now,
+          perAlgo: currentPerAlgo
         };
-        
-        return [...prev, newPoint].slice(-300); // Keep last 300 data points (10 minutes @ 2s interval)
-      });
+      }
+    } else {
+      // First run initialization if initial load missed it
+      prevMetricsRef.current = {
+        allowed: realtimeMetrics.totalAllowedRequests,
+        denied: realtimeMetrics.totalDeniedRequests,
+        timestamp: now,
+        perAlgo: {}
+      };
     }
-    
+
     setActiveKeys(currentActiveKeys);
     setSuccessRate(currentSuccessRate);
-    
-    // Update algorithm metrics from real data
-    if (realtimeMetrics.perAlgorithmMetrics) {
-      const metrics: AlgorithmMetric[] = Object.entries(realtimeMetrics.perAlgorithmMetrics)
-        .filter(([_, data]) => (data.allowedRequests + data.deniedRequests) > 0)
-        .map(([name, data]) => ({
-          name,
-          activeKeys: 0, // Will be updated by fetchAlgorithmMetrics
-          avgResponseTime: parseFloat((data.totalProcessingTimeMs / (data.allowedRequests + data.deniedRequests || 1)).toFixed(2)),
-          successRate: parseFloat(((data.allowedRequests / (data.allowedRequests + data.deniedRequests || 1)) * 100).toFixed(2)),
-        }));
-      
-      if (metrics.length > 0) {
-        setAlgorithmMetrics(prev => {
-          return metrics.map(m => {
-            const existing = prev.find(p => p.name === m.name);
-            return { ...m, activeKeys: existing?.activeKeys || 0 };
-          });
-        });
-      }
-    }
-    
-    // Update activity events from real events fetched from backend
+
+    // Update activity events
     if (realtimeMetrics.recentEvents) {
       const newActivities: ActivityEvent[] = realtimeMetrics.recentEvents.map(event => ({
         id: event.id,
         timestamp: new Date(event.timestamp).toISOString(),
         key: event.key,
-        algorithm: event.algorithm,
+        algorithm: ALGO_DISPLAY_NAMES[event.algorithm] || event.algorithm,
         status: event.allowed ? "allowed" : "rejected",
         tokensUsed: event.tokens,
       }));
-      
+
       setActivities(newActivities.sort((a, b) => 
         new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
       ));
     }
-    
-    // Update previous metrics for next calculation
-    setPreviousMetrics({
-      allowed: realtimeMetrics.totalAllowedRequests,
-      denied: realtimeMetrics.totalDeniedRequests,
-      timestamp: Date.now()
-    });
-    
-  }, [realtimeMetrics, previousMetrics]);
 
-  // Fetch and update algorithm distribution from admin keys
+  }, [realtimeMetrics]);
+
+  // Fetch algorithm keys distribution
   useEffect(() => {
     const fetchAlgorithmMetrics = async () => {
       try {
         const keysData = await rateLimiterApi.getActiveKeys();
-        
-        // Group by algorithm
-        const algorithmGroups: Record<string, { count: number; allowed: number; denied: number; time: number }> = {};
-        
+        const algorithmGroups: Record<string, number> = {};
+
         keysData.keys.forEach(key => {
           const algo = key.algorithm || 'TOKEN_BUCKET';
-          if (!algorithmGroups[algo]) {
-            algorithmGroups[algo] = { count: 0, allowed: 0, denied: 0, time: 0 };
-          }
-          algorithmGroups[algo].count++;
+          algorithmGroups[algo] = (algorithmGroups[algo] || 0) + 1;
         });
-        
-        // Convert to algorithm metrics format using real backend metrics if available
-        const metrics: AlgorithmMetric[] = Object.entries(algorithmGroups).map(([name, data]) => {
-          const backendAlgo = realtimeMetrics?.perAlgorithmMetrics?.[name];
-          return {
-            name,
-            activeKeys: data.count,
-            avgResponseTime: backendAlgo ? parseFloat((backendAlgo.totalProcessingTimeMs / (backendAlgo.allowedRequests + backendAlgo.deniedRequests || 1)).toFixed(2)) : 0,
-            successRate: backendAlgo ? parseFloat(((backendAlgo.allowedRequests / (backendAlgo.allowedRequests + backendAlgo.deniedRequests || 1)) * 100).toFixed(2)) : 100,
-          };
-        });
-        
-        setAlgorithmMetrics(metrics);
-        
+
+        setAlgorithmMetrics(prev => prev.map(m => ({
+          ...m,
+          activeKeys: algorithmGroups[m.name] || 0
+        })));
       } catch (error) {
         console.error('Failed to fetch algorithm metrics:', error);
       }
     };
-    
-    // Fetch immediately and then every 30 seconds
+
     fetchAlgorithmMetrics();
     const interval = setInterval(fetchAlgorithmMetrics, 30000);
-    
     return () => clearInterval(interval);
   }, []);
 
@@ -247,29 +269,27 @@ const Dashboard = () => {
           icon={Activity}
           trend={isConnected ? { value: "Live", isPositive: true } : undefined}
         />
-        
+
         <StatCard
           title="Requests/Second"
           value={requestsPerSecond}
           icon={TrendingUp}
           trend={isConnected ? { value: "Live", isPositive: true } : undefined}
         />
-        
+
         <StatCard
           title="Success Rate"
           value={`${successRate}%`}
           icon={PieChart}
-          trend={successRate >= 95 ? { value: "Healthy", isPositive: true } : { value: "Warning", isPositive: false }}
+          trend={parseFloat(successRate.toString()) >= 95 ? { value: "Healthy", isPositive: true } : { value: "Warning", isPositive: false }}
         />
-        
+
         <StatCard
           title="Algorithms"
           value={algorithmMetrics.length}
           icon={Sliders}
         />
       </div>
-
-      <AdaptiveControlPanel />
 
       {/* Algorithm Performance Cards */}
       <div>
@@ -278,15 +298,15 @@ const Dashboard = () => {
           {algorithmMetrics.map((algo) => (
             <AlgorithmCard
               key={algo.name}
-              name={algo.name}
+              name={algo.displayName}
               activeKeys={algo.activeKeys}
               avgResponseTime={algo.avgResponseTime}
               successRate={algo.successRate}
+              requestsPerSecond={algo.requestsPerSecond}
             />
           ))}
         </div>
       </div>
-
       {/* Bottom Section: Activity Feed and Adaptive Status */}
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">
