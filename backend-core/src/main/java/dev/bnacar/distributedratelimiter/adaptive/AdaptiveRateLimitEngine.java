@@ -145,31 +145,32 @@ public class AdaptiveRateLimitEngine {
             // IDLE PROTECTION, DECAY & EVICTION LOGIC:
             if (userMetrics.getCurrentRequestRate() <= 0.01) {
                 SystemHealth health = metricsCollector.getCurrentHealth();
-                double uCurr = Math.max(health.getCpuUtilization(), Math.max(health.getResponseTimeP95()/2000.0, health.getErrorRate()/0.20));
+                double uCurr = Math.max(health.getCpuUtilization(), Math.max(health.getResponseTimeP95()/100.0, health.getErrorRate()/0.05));
+
                 RateLimitConfig baseConfig = configurationResolver.getBaseConfig(key);
                 int lBase = baseConfig.getCapacity();
+                int rBase = baseConfig.getRefillRate();
 
-                // Case A: System is stressed (>70%) but user is idle.
-                // Protect them from MD (Multiplicative Decrease) that policyEngine likely recommended.
-                if (uCurr > 0.70 && decision.getRecommendedCapacity() < ((current != null) ? current.adaptedCapacity : lBase)) {
+                // Case A: System is stressed but user is idle.
+                // PROTECTION: If it's normal stress (DECREASE), protect the idle user.
+                // CRITICAL: If it's a PANIC mode, bypass protection and slash the limit anyway.
+                if (uCurr > 0.70 && !"PANIC".equals(decision.getReasoning().get("decision")) && 
+                    decision.getRecommendedCapacity() < ((current != null) ? current.adaptedCapacity : lBase)) {
                     logger.debug("[PROTECTED] Key: {} is idle during stress. Skipping decrease.", key);
                     return;
                 }
                 
-                // Case B: System is healthy (<=70%) and user is idle but has an inflated limit.
-                // Decay them back to lBase to prevent capacity hoarding.
-                if (uCurr <= 0.70 && current != null && current.adaptedCapacity > lBase) {
-                    int decayedCap = Math.max(lBase, (int)(current.adaptedCapacity * 0.90));
-                    int decayedRefill = Math.max(baseConfig.getRefillRate(), (int)(current.adaptedRefillRate * 0.90));
-                    
+                // Case B: System is healthy (<=70%) and user is idle but has an adapted limit (either too high or too low).
+                // ACTION: Instant reset to base to ensure they are ready for fresh traffic.
+                if (uCurr <= 0.70 && current != null && (current.adaptedCapacity != lBase || current.adaptedRefillRate != rBase)) {
                     Map<String, String> reasoning = new HashMap<>(decision.getReasoning());
-                    reasoning.put("decision", "IDLE_DECAY");
-                    reasoning.put("details", String.format("Decaying from %d to %d (Idle)", current.adaptedCapacity, decayedCap));
+                    reasoning.put("decision", "INSTANT_RESET");
+                    reasoning.put("details", String.format("Returning to base limits %d/%d (System Healthy)", lBase, rBase));
                     
                     decision = AdaptationDecision.builder()
                         .shouldAdapt(true)
-                        .recommendedCapacity(decayedCap)
-                        .recommendedRefillRate(decayedRefill)
+                        .recommendedCapacity(lBase)
+                        .recommendedRefillRate(rBase)
                         .reasoning(reasoning)
                         .build();
                     

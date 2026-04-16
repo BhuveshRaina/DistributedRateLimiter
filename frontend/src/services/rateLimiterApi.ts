@@ -1,8 +1,10 @@
 // Real API Service for Distributed Rate Limiter Backend
 
-// Use relative URLs in development (Vite proxy) and production (same origin)
-// In development, Vite proxy forwards /api/* and /actuator/* to http://localhost:8080
-const API_BASE_URL = import.meta.env.PROD ? '' : '';
+// Use Vercel Environment Variables or fallback to localhost for development
+const MANAGER_URL = import.meta.env.VITE_MANAGER_URL || 'http://localhost:8080';
+const GENERATOR_URL = import.meta.env.VITE_GENERATOR_URL || 'http://localhost:8082';
+const WORKER_LB_URL = import.meta.env.VITE_WORKER_URL || 'http://localhost:8081'; 
+
 const ADMIN_CREDENTIALS = btoa('admin:admin123');
 
 interface RateLimitCheckRequest {
@@ -146,9 +148,10 @@ interface ErrorResponse {
 class RateLimiterApiService {
   private async request<T>(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    baseUrl: string = MANAGER_URL // Default to Manager
   ): Promise<T> {
-    const url = `${API_BASE_URL}${endpoint}`;
+    const url = `${baseUrl}${endpoint}`;
     
     try {
       const response = await fetch(url, {
@@ -210,7 +213,7 @@ class RateLimiterApiService {
     return this.request<RateLimitCheckResponse>('/api/ratelimit/check', {
       method: 'POST',
       body: JSON.stringify(request),
-    });
+    }, WORKER_LB_URL);
   }
 
   // ============ CONFIGURATION ============
@@ -289,19 +292,19 @@ class RateLimiterApiService {
     return this.request<LoadTestResponse>('/api/benchmark/run', {
       method: 'POST',
       body: JSON.stringify(request),
-    });
+    }, GENERATOR_URL);
   }
 
   // ============ METRICS ============
   
   async getMetrics(): Promise<SystemMetrics> {
-    return this.request<SystemMetrics>('/metrics');
+    return this.request<SystemMetrics>('/metrics', {}, MANAGER_URL);
   }
 
   // ============ HEALTH CHECK ============
   
   async healthCheck(): Promise<HealthResponse> {
-    return this.request<HealthResponse>('/actuator/health');
+    return this.request<HealthResponse>('/actuator/health', {}, MANAGER_URL);
   }
 
   // ============ SCHEDULING ============

@@ -39,7 +39,7 @@ public class SystemMetricsCollector {
     private final MemoryMXBean memoryBean;
     
     // EWMA state for smoothing (to prevent volatile spikes from causing destructive interference)
-    private static final double EWMA_ALPHA = 0.3; // 30% new data, 70% historical
+    private static final double EWMA_ALPHA = 1.0; // FORCED TO 1.0 FOR TESTING
     private double ewmaCpu = 0.0;
     private double ewmaResponseTime = 0.0;
     private double ewmaErrorRate = 0.0;
@@ -140,7 +140,7 @@ public class SystemMetricsCollector {
 
         // 4. Apply EWMA Smoothing
         this.ewmaCpu = (EWMA_ALPHA * rawCpu) + ((1 - EWMA_ALPHA) * this.ewmaCpu);
-        this.ewmaResponseTime = (EWMA_ALPHA * rawP95) + ((1 - EWMA_ALPHA) * this.ewmaResponseTime);
+        this.ewmaResponseTime = 10.0; // FORCED TO 10.0 FOR MD TESTING
         this.ewmaErrorRate = (EWMA_ALPHA * rawErrorRate) + ((1 - EWMA_ALPHA) * this.ewmaErrorRate);
 
         SystemHealth newHealth = SystemHealth.builder()

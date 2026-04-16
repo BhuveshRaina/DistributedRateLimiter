@@ -7,78 +7,7 @@ services:
       - "6379:6379"
     restart: unless-stopped
 
-  # TIER 1: The Traffic Generator (Simulates real users)
-  generator:
-    build:
-      context: .
-      dockerfile: ./backend-generator/Dockerfile
-    container_name: drl-generator
-    environment:
-      - RATELIMITER_LOADBALANCER_URL=http://loadbalancer
-      - RATELIMITER_REDIS_ENABLED=false 
-      - RATELIMITER_SECURITY_API_KEYS_ENABLED=false
-    restart: unless-stopped
-
-  # TIER 2: The Rate Limit Workers (The Data Plane)
-  worker1:
-    build:
-      context: .
-      dockerfile: ./backend-worker/Dockerfile
-    container_name: drl-worker-1
-    environment:
-      - SPRING_DATA_REDIS_HOST=redis
-      - SPRING_DATA_REDIS_PORT=6379
-      - RATELIMITER_SECURITY_API_KEYS_ENABLED=false
-      - RATELIMITER_ADAPTIVE_ENABLED=true
-    depends_on:
-      - redis
-    restart: unless-stopped
-
-  worker2:
-    build:
-      context: .
-      dockerfile: ./backend-worker/Dockerfile
-    container_name: drl-worker-2
-    environment:
-      - SPRING_DATA_REDIS_HOST=redis
-      - SPRING_DATA_REDIS_PORT=6379
-      - RATELIMITER_SECURITY_API_KEYS_ENABLED=false
-      - RATELIMITER_ADAPTIVE_ENABLED=true
-    depends_on:
-      - redis
-    restart: unless-stopped
-
-  worker3:
-    build:
-      context: .
-      dockerfile: ./backend-worker/Dockerfile
-    container_name: drl-worker-3
-    environment:
-      - SPRING_DATA_REDIS_HOST=redis
-      - SPRING_DATA_REDIS_PORT=6379
-      - RATELIMITER_SECURITY_API_KEYS_ENABLED=false
-      - RATELIMITER_ADAPTIVE_ENABLED=true
-    depends_on:
-      - redis
-    restart: unless-stopped
-
-  # TIER 3: The Management Node (The Control Plane)
-  manager:
-    build:
-      context: .
-      dockerfile: ./backend-manager/Dockerfile
-    container_name: drl-manager
-    environment:
-      - SPRING_DATA_REDIS_HOST=redis
-      - SPRING_DATA_REDIS_PORT=6379
-      - RATELIMITER_SECURITY_API_KEYS_ENABLED=false
-      - RATELIMITER_NODE_TYPE=manager
-      - RATELIMITER_ADAPTIVE_ENABLED=true
-    depends_on:
-      - redis
-    restart: unless-stopped
-
-  # Nginx Load Balancer
+  # High-Performance Load Balancer for Workers
   loadbalancer:
     build:
       context: .
@@ -87,11 +16,79 @@ services:
     ports:
       - "8081:80"
     depends_on:
-      - generator
       - worker1
       - worker2
       - worker3
-      - manager
+    restart: unless-stopped
+
+  # TIER 1: The Traffic Generator
+  generator:
+    build:
+      context: .
+      dockerfile: backend-generator/Dockerfile
+    container_name: drl-generator
+    ports:
+      - "8082:8082"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      # Generator hits the internal Nginx service name on port 80
+      # The code appends /api/ratelimit/check automatically
+      - RATELIMITER_LOADBALANCER_URL=http://loadbalancer
+      - RATELIMITER_REDIS_ENABLED=false
+    depends_on:
+      - loadbalancer
+    restart: unless-stopped
+
+  # TIER 2: The Data Plane (Workers)
+  worker1:
+    build:
+      context: .
+      dockerfile: backend-worker/Dockerfile
+    container_name: drl-worker-1
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - RATELIMITER_NODE_ID=worker-1
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  worker2:
+    build:
+      context: .
+      dockerfile: backend-worker/Dockerfile
+    container_name: drl-worker-2
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - RATELIMITER_NODE_ID=worker-2
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  worker3:
+    build:
+      context: .
+      dockerfile: backend-worker/Dockerfile
+    container_name: drl-worker-3
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - RATELIMITER_NODE_ID=worker-3
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # TIER 3: The Control Plane (Manager)
+  manager:
+    build:
+      context: .
+      dockerfile: backend-manager/Dockerfile
+    container_name: drl-manager
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - RATELIMITER_NODE_TYPE=manager
+    depends_on:
+      - redis
     restart: unless-stopped
 
 networks:

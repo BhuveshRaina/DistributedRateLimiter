@@ -43,6 +43,7 @@ public class AimdPolicyEngine {
         
         double sTraffic = Math.max(sLat, sErr);
         double uCurrent = Math.max(sCpu, sTraffic);
+        logger.info("[AIMD DEBUG] uCurrent={}, sLat={}, sCpu={}, sErr={}, target={}", uCurrent, sLat, sCpu, sErr, U_TARGET);
         double e = uCurrent - U_TARGET;
 
         // --- PHASE 2: STATISTICAL PROFILING ---

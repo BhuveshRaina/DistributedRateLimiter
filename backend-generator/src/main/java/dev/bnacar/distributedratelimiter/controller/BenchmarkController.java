@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicLong;
 @RestController
 @RequestMapping("/api/benchmark")
 @Tag(name = "benchmark-controller", description = "Performance benchmarking and load testing utilities")
-@CrossOrigin(origins = {"http://localhost:5173", "http://localhost:3000"})
+@CrossOrigin(origins = "*")
 public class BenchmarkController {
     private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(BenchmarkController.class);
     private final dev.bnacar.distributedratelimiter.ratelimit.RateLimiterService rateLimiterService;

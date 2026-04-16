@@ -20,7 +20,7 @@ import java.util.Set;
 @RestController
 @RequestMapping("/admin/api-keys")
 @Tag(name = "API Key Management", description = "CRUD operations for authentication API keys")
-@CrossOrigin(origins = {"http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173", "http://127.0.0.1:3000", "http://[::1]:5173", "http://[::1]:3000"})
+@CrossOrigin(origins = "*")
 public class ApiKeyController {
 
     private final ApiKeyService apiKeyService;

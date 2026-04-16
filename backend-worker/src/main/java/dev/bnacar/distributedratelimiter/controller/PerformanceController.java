@@ -30,7 +30,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/performance")
 @Tag(name = "performance-controller", description = "Performance monitoring and regression analysis for rate limiter operations")
-@CrossOrigin(origins = {"http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173", "http://127.0.0.1:3000", "http://[::1]:5173", "http://[::1]:3000"})
+@CrossOrigin(origins = "*")
 public class PerformanceController {
 
     private final PerformanceRegressionService regressionService;

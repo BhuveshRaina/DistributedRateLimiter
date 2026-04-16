@@ -22,7 +22,7 @@ import jakarta.validation.constraints.NotBlank;
 @RestController
 @RequestMapping("/api/ratelimit/adaptive")
 @Tag(name = "Adaptive Rate Limiting", description = "Machine learning-driven adaptive rate limit management")
-@CrossOrigin(origins = {"http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173", "http://127.0.0.1:3000", "http://[::1]:5173", "http://[::1]:3000"})
+@CrossOrigin(origins = "*")
 public class AdaptiveRateLimitController {
     
     private static final Logger logger = LoggerFactory.getLogger(AdaptiveRateLimitController.class);

@@ -39,7 +39,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/ratelimit")
 @Tag(name = "Rate Limit", description = "Rate limiting operations")
-@CrossOrigin(origins = {"http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173", "http://127.0.0.1:3000", "http://[::1]:5173", "http://[::1]:3000"})
+@CrossOrigin(origins = "*")
 public class RateLimitController {
     private static final Logger logger = LoggerFactory.getLogger(RateLimitController.class);
 
